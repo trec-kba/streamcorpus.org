@@ -1,0 +1,539 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._local_storage &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._local_storage</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Provides classes for loading chunk files from local storage and</span>
+<span class="sd">putting them out into local storage.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2014 Diffeo, Inc.</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">errno</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">shutil</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._get_name_info</span> <span class="kn">import</span> <span class="n">get_name_info</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._tarball_export</span> <span class="kn">import</span> <span class="n">tarball_export</span>
+<span class="kn">from</span> <span class="nn">yakonfig</span> <span class="kn">import</span> <span class="n">ConfigurationError</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="n">_message_versions</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;v0_1_0&#39;</span><span class="p">:</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_1_0</span><span class="p">,</span>
+    <span class="s">&#39;v0_2_0&#39;</span><span class="p">:</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_2_0</span><span class="p">,</span>
+    <span class="s">&#39;v0_3_0&#39;</span><span class="p">:</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_3_0</span><span class="p">,</span>
+    <span class="p">}</span>
+
+
+<span class="k">def</span> <span class="nf">_check_version</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;streamcorpus_version&#39;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_message_versions</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span>
+            <span class="s">&#39;invalid {0} streamcorpus_version {1}&#39;</span>
+            <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;streamcorpus_version&#39;</span><span class="p">]))</span>
+
+
+<div class="viewcode-block" id="from_local_chunks"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._local_storage.from_local_chunks">[docs]</a><span class="k">class</span> <span class="nc">from_local_chunks</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    may use config[&#39;max_retries&#39;] (default 1)</span>
+<span class="sd">    may use config[&#39;max_backoff&#39;] (seconds, default 300)</span>
+<span class="sd">    may use config[&#39;streamcorpus_version&#39;] (default &#39;v0_3_0&#39;)</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;from_local_chunks&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;max_backoff&#39;</span><span class="p">:</span> <span class="mi">300</span><span class="p">,</span>
+        <span class="s">&#39;streamcorpus_version&#39;</span><span class="p">:</span> <span class="s">&#39;v0_3_0&#39;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="n">_check_version</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="n">backoff</span> <span class="o">=</span> <span class="mf">0.1</span>
+        <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="n">tries</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">max_retries</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;max_retries&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">))</span>
+        <span class="n">last_exc</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="k">while</span> <span class="n">tries</span> <span class="o">&lt;</span> <span class="n">max_retries</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">message</span> <span class="o">=</span> <span class="n">_message_versions</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;streamcorpus_version&#39;</span><span class="p">]]</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;reading from </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">i_str</span><span class="p">)</span>
+                <span class="n">chunk</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">i_str</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;rb&#39;</span><span class="p">,</span> <span class="n">message</span><span class="o">=</span><span class="n">message</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">chunk</span>
+            <span class="k">except</span> <span class="ne">IOError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ENOENT</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;File is missing?  Assume is slow NFS, try </span><span class="si">%d</span><span class="s"> more times&#39;</span><span class="p">,</span>
+                                    <span class="n">max_retries</span> <span class="o">-</span> <span class="n">tries</span><span class="p">)</span>
+                    <span class="n">backoff</span> <span class="o">*=</span> <span class="mi">2</span>
+                    <span class="n">tries</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+                    <span class="k">if</span> <span class="n">elapsed</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;max_backoff&#39;</span><span class="p">]:</span>
+                        <span class="c">## give up after five minutes of retries</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;File </span><span class="si">%r</span><span class="s"> not found after </span><span class="si">%d</span><span class="s"> retries&#39;</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">tries</span><span class="p">)</span>
+                        <span class="k">raise</span>
+                    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">backoff</span><span class="p">)</span>
+                    <span class="n">last_exc</span> <span class="o">=</span> <span class="n">exc</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;failed loading </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                    <span class="k">raise</span>
+
+        <span class="c">## exceeded max_retries</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;File </span><span class="si">%r</span><span class="s"> not found after </span><span class="si">%d</span><span class="s"> retries&#39;</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">tries</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">last_exc</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">last_exc</span>
+        <span class="k">raise</span> <span class="ne">IOError</span><span class="p">(</span><span class="s">&#39;File </span><span class="si">%r</span><span class="s"> not found after </span><span class="si">%d</span><span class="s"> retries&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">i_str</span><span class="p">,</span> <span class="n">tries</span><span class="p">))</span>
+
+</div>
+<span class="k">def</span> <span class="nf">patient_move</span><span class="p">(</span><span class="n">path1</span><span class="p">,</span> <span class="n">path2</span><span class="p">,</span> <span class="n">max_tries</span><span class="o">=</span><span class="mi">30</span><span class="p">):</span>
+    <span class="n">backoff</span> <span class="o">=</span> <span class="mf">0.1</span>
+    <span class="n">tries</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="k">while</span> <span class="n">tries</span> <span class="o">&lt;</span> <span class="n">max_tries</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">shutil</span><span class="o">.</span><span class="n">copy2</span><span class="p">(</span><span class="n">path1</span><span class="p">,</span> <span class="n">path2</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">IOError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+                <span class="n">tries</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="n">tries</span> <span class="o">&gt;</span> <span class="n">max_tries</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%d</span><span class="s"> tries failed copying </span><span class="si">%r</span><span class="s"> to </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">tries</span><span class="p">,</span> <span class="n">path1</span><span class="p">,</span> <span class="n">path2</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                    <span class="k">raise</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;attempting retry on shutil.copy2(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">path1</span><span class="p">,</span> <span class="n">path2</span><span class="p">)</span>
+                <span class="n">backoff</span> <span class="o">*=</span> <span class="mi">2</span>
+                <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">backoff</span><span class="p">)</span>
+                <span class="k">continue</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;failed copy </span><span class="si">%r</span><span class="s"> -&gt; </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">path1</span><span class="p">,</span> <span class="n">path2</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">raise</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">path1</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;ignoring failure to os.remove(</span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">path1</span><span class="p">)</span>
+            <span class="k">pass</span>
+
+        <span class="c">## if we get here, we succeeded</span>
+        <span class="k">return</span>
+
+    <span class="c"># should never get here</span>
+    <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;weird error inside patient_move(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">path1</span><span class="p">,</span> <span class="n">path2</span><span class="p">))</span>
+
+
+<div class="viewcode-block" id="from_local_files"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._local_storage.from_local_files">[docs]</a><span class="k">class</span> <span class="nc">from_local_files</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Read plain text or other raw content from local files.</span>
+
+<span class="sd">    Each input filename is taken as an actual filename.  This produces</span>
+<span class="sd">    one stream item per file.  This can be configured as follows:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        abs_url: null</span>
+<span class="sd">        url_prefix: file://</span>
+<span class="sd">        absolute_filename: true</span>
+<span class="sd">        epoch_ticks: file</span>
+<span class="sd">        encoding: null</span>
+
+<span class="sd">    If `abs_url` is provided in configuration, this value is used</span>
+<span class="sd">    as-is as the corresponding field in the stream item.  Otherwise,</span>
+<span class="sd">    the path is converted to an absolute path if `absolute_filename`</span>
+<span class="sd">    is true, and then `url_prefix` is prepended to it.</span>
+
+<span class="sd">    `epoch_ticks` indicates the corresponding time stamp in the stream</span>
+<span class="sd">    item.  This may be an integer for specific seconds since the Unix</span>
+<span class="sd">    epoch, the string ``file`` indicating to use the last-modified</span>
+<span class="sd">    time of the file, or the string ``now`` for the current time.</span>
+
+<span class="sd">    ``encoding`` should be set if you know the encoding of the files</span>
+<span class="sd">    you&#39;re loading. e.g., ``utf-8``.</span>
+
+<span class="sd">    The values shown above are the defaults.  If reading in files</span>
+<span class="sd">    in a directory structure matching a URL hierarchy, an alternate</span>
+<span class="sd">    configuration could be</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        url_prefix: &quot;http://home.example.com/&quot;</span>
+<span class="sd">        absolute_path: false</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;from_local_files&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;abs_url&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+        <span class="s">&#39;url_prefix&#39;</span><span class="p">:</span> <span class="s">&#39;file://&#39;</span><span class="p">,</span>
+        <span class="s">&#39;absolute_filename&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+        <span class="s">&#39;epoch_ticks&#39;</span><span class="p">:</span> <span class="s">&#39;file&#39;</span><span class="p">,</span>
+        <span class="s">&#39;encoding&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">from_local_files</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">abs_url</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;abs_url&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">url_prefix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;url_prefix&#39;</span><span class="p">,</span> <span class="s">&#39;&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">absolute_filename</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;absolute_filename&#39;</span><span class="p">,</span> <span class="bp">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">epoch_ticks</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;epoch_ticks&#39;</span><span class="p">,</span> <span class="s">&#39;file&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">encoding</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;encoding&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="p">((</span><span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">epoch_ticks</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> <span class="ow">and</span>
+             <span class="bp">self</span><span class="o">.</span><span class="n">epoch_ticks</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="s">&#39;file&#39;</span><span class="p">,</span> <span class="s">&#39;now&#39;</span><span class="p">])):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">epoch_ticks</span> <span class="o">=</span> <span class="s">&#39;file&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">epoch_ticks</span> <span class="o">==</span> <span class="s">&#39;file&#39;</span><span class="p">:</span>
+            <span class="n">st</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">stat</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span>
+            <span class="n">epoch_ticks</span> <span class="o">=</span> <span class="n">st</span><span class="o">.</span><span class="n">st_mtime</span>
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">epoch_ticks</span> <span class="o">==</span> <span class="s">&#39;now&#39;</span><span class="p">:</span>
+            <span class="n">epoch_ticks</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">epoch_ticks</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">epoch_ticks</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">abs_url</span><span class="p">:</span>
+            <span class="n">abs_url</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">abs_url</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">abs_url</span> <span class="o">=</span> <span class="n">i_str</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">absolute_filename</span><span class="p">:</span>
+                <span class="n">abs_url</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">abspath</span><span class="p">(</span><span class="n">abs_url</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">url_prefix</span><span class="p">:</span>
+                <span class="n">abs_url</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">url_prefix</span> <span class="o">+</span> <span class="n">abs_url</span>
+
+        <span class="n">si</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">make_stream_item</span><span class="p">(</span><span class="n">epoch_ticks</span><span class="p">,</span> <span class="n">abs_url</span><span class="p">)</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">i_str</span><span class="p">,</span> <span class="s">&#39;rb&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">encoding</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">encoding</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">encoding</span>
+
+        <span class="k">yield</span> <span class="n">si</span>
+
+</div>
+<div class="viewcode-block" id="to_local_chunks"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._local_storage.to_local_chunks">[docs]</a><span class="k">class</span> <span class="nc">to_local_chunks</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+
+    <span class="sd">&#39;&#39;&#39;Write output to a local chunk file.</span>
+
+<span class="sd">    .. warning:: This stage must be listed last in the ``writers`` list.</span>
+<span class="sd">                 For efficiency it renames the intermediate chunk file,</span>
+<span class="sd">                 and so any subsequent writer stages will have no input</span>
+<span class="sd">                 chunk file to work with.</span>
+
+<span class="sd">    This stage may take several additional configuration parameters.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        output_type: samedir</span>
+
+<span class="sd">    Where to place the output: ``inplace`` replaces the input file;</span>
+<span class="sd">    ``samedir`` uses the `output_name` in the same directory as the</span>
+<span class="sd">    input; and ``otherdir`` uses `output_name` in `output_path`.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        output_path: /home/diffeo/outputs</span>
+
+<span class="sd">    If `output_type` is ``otherdir``, the name of the directory to</span>
+<span class="sd">    write to.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        output_name: output-%(first)d.sc</span>
+
+<span class="sd">    Gives the name of the output file if `output_type` is not</span>
+<span class="sd">    ``inplace``.  If this is ``input`` then the output file name is</span>
+<span class="sd">    automatically derived from the input file name.  This may also</span>
+<span class="sd">    include Python format string parameters:</span>
+
+<span class="sd">    * ``%(input_fname)s``: the basename of the input file name</span>
+<span class="sd">    * ``%(input_md5)s``: the last part of a hyphenated input filename</span>
+<span class="sd">    * ``%(md5)s``: MD5 hash of the chunk file</span>
+<span class="sd">    * ``%(first)d``: index of the first item in the chunk file</span>
+<span class="sd">    * ``%(num)d``: number of items in the chunk file</span>
+<span class="sd">    * ``%(epoch_ticks)d``: timestamp of the first item in the chunk file</span>
+<span class="sd">    * ``%(target_names)s``: hyphenated list of rating target names</span>
+<span class="sd">    * ``%(source)s``: source name for items in the chunk file</span>
+<span class="sd">    * ``%(doc_ids_8)s``: hyphenated list of 8-character suffixes of</span>
+<span class="sd">      document IDs</span>
+<span class="sd">    * ``%(date_hour)s``: partial timestamp including date and hour</span>
+<span class="sd">    * ``%(rand8)s``: 8-byte random hex string</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        compress: true</span>
+
+<span class="sd">    If specified, append ``.xz`` to the output file name and</span>
+<span class="sd">    LZMA-compress the output file.  Defaults to false.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        cleanup_tmp_files: false</span>
+
+<span class="sd">    If set to &quot;false&quot;, do not delete the intermediate file (or rename</span>
+<span class="sd">    it away), enabling later writer stages to be run.  Defaults to</span>
+<span class="sd">    true.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;to_local_chunks&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+        <span class="s">&#39;compress&#39;</span><span class="p">:</span> <span class="bp">False</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="n">o_type</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_type&#39;</span><span class="p">]</span>
+
+        <span class="n">name_info</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">get_name_info</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">i_str</span><span class="o">=</span><span class="n">i_str</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">name_info</span><span class="p">[</span><span class="s">&#39;num&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="k">if</span> <span class="s">&#39;input&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_name&#39;</span><span class="p">]:</span>
+            <span class="n">i_fname</span> <span class="o">=</span> <span class="n">i_str</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">i_fname</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;.gpg&#39;</span><span class="p">):</span>
+                <span class="n">i_fname</span> <span class="o">=</span> <span class="n">i_fname</span><span class="p">[:</span><span class="o">-</span><span class="mi">4</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">i_fname</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;.xz&#39;</span><span class="p">):</span>
+                <span class="n">i_fname</span> <span class="o">=</span> <span class="n">i_fname</span><span class="p">[:</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">i_fname</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;.sc&#39;</span><span class="p">):</span>
+                <span class="n">i_fname</span> <span class="o">=</span> <span class="n">i_fname</span><span class="p">[:</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span>
+            <span class="n">name_info</span><span class="p">[</span><span class="s">&#39;input_fname&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">i_fname</span>
+
+        <span class="c"># prepare to compress the output</span>
+        <span class="n">compress</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;compress&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">o_type</span> <span class="o">==</span> <span class="s">&#39;samedir&#39;</span><span class="p">:</span>
+            <span class="c"># assume that i_str was a local path</span>
+            <span class="k">assert</span> <span class="n">i_str</span><span class="p">[</span><span class="o">-</span><span class="mi">3</span><span class="p">:]</span> <span class="o">==</span> <span class="s">&#39;.sc&#39;</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">i_str</span><span class="p">[</span><span class="o">-</span><span class="mi">3</span><span class="p">:])</span>
+            <span class="n">o_path</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[:</span><span class="o">-</span><span class="mi">3</span><span class="p">]</span> <span class="o">+</span> <span class="s">&#39;-</span><span class="si">%s</span><span class="s">.sc&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_name&#39;</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">compress</span><span class="p">:</span>
+                <span class="n">o_path</span> <span class="o">+=</span> <span class="s">&#39;.xz&#39;</span>
+            <span class="c"># print &#39;creating %s&#39; % o_path</span>
+
+        <span class="k">elif</span> <span class="n">o_type</span> <span class="o">==</span> <span class="s">&#39;inplace&#39;</span><span class="p">:</span>
+            <span class="c"># replace the input chunks with the newly created</span>
+            <span class="n">o_path</span> <span class="o">=</span> <span class="n">i_str</span>
+            <span class="k">if</span> <span class="n">o_path</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;.xz&#39;</span><span class="p">):</span>
+                <span class="n">compress</span> <span class="o">=</span> <span class="bp">True</span>
+
+        <span class="k">elif</span> <span class="n">o_type</span> <span class="o">==</span> <span class="s">&#39;otherdir&#39;</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_path&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">):</span>
+                <span class="n">o_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_path&#39;</span><span class="p">])</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">o_dir</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_path&#39;</span><span class="p">]</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">o_dir</span><span class="p">):</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">o_dir</span><span class="p">)</span>
+
+            <span class="n">o_fname</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_name&#39;</span><span class="p">]</span> <span class="o">%</span> <span class="n">name_info</span>
+            <span class="n">o_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">o_dir</span><span class="p">,</span> <span class="n">o_fname</span> <span class="o">+</span> <span class="s">&#39;.sc&#39;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">compress</span><span class="p">:</span>
+                <span class="n">o_path</span> <span class="o">+=</span> <span class="s">&#39;.xz&#39;</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;writing chunk file to {0}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">o_path</span><span class="p">))</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;temporary chunk in {0}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">t_path</span><span class="p">))</span>
+
+        <span class="c"># if dir is missing make it</span>
+        <span class="n">dirname</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dirname</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">dirname</span><span class="p">):</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dirname</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">compress</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="n">o_path</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;.xz&#39;</span><span class="p">),</span> <span class="n">o_path</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;compress_and_encrypt_path(</span><span class="si">%r</span><span class="s">, tmp_dir=</span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span>
+                        <span class="n">t_path</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">])</span>
+
+            <span class="n">errors</span><span class="p">,</span> <span class="n">t_path2</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">compress_and_encrypt_path</span><span class="p">(</span>
+                <span class="n">t_path</span><span class="p">,</span> <span class="n">tmp_dir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">])</span>
+            <span class="k">assert</span> <span class="ow">not</span> <span class="n">errors</span><span class="p">,</span> <span class="n">errors</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">]:</span>
+                <span class="c"># default action, move tmp file to output position</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;attempting renamed(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                    <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;renamed(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">EXDEV</span><span class="p">:</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;resorting to patient_move(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span>
+                                     <span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                        <span class="n">patient_move</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;patient_move succeeded&#39;</span><span class="p">)</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;rename failed (</span><span class="si">%r</span><span class="s"> -&gt; </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span>
+                                     <span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                        <span class="k">raise</span>
+                <span class="k">return</span> <span class="p">[</span><span class="n">o_path</span><span class="p">]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c"># for debugging, leave temp file, copy to output</span>
+                <span class="n">shutil</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;copied </span><span class="si">%r</span><span class="s"> -&gt; </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                <span class="k">return</span> <span class="p">[</span><span class="n">o_path</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">]:</span>
+            <span class="c"># do an atomic renaming</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;attemping os.rename(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">EXDEV</span><span class="p">:</span>
+                    <span class="n">patient_move</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
+                        <span class="s">&#39;failed shutil.copy2(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">) and/or &#39;</span>
+                        <span class="s">&#39;os.remove(t_path)&#39;</span><span class="p">,</span>
+                        <span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                    <span class="k">raise</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;failed os.rename(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span>
+                             <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">raise</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c"># for debugging, leave the tmp file, copy to output position</span>
+            <span class="n">shutil</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;copied </span><span class="si">%r</span><span class="s"> -&gt; </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+
+        <span class="c"># return the final output path</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">o_path</span><span class="p">]</span>
+
+</div>
+<div class="viewcode-block" id="to_local_tarballs"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._local_storage.to_local_tarballs">[docs]</a><span class="k">class</span> <span class="nc">to_local_tarballs</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;to_local_tarballs&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="n">name_info</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">get_name_info</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">i_str</span><span class="o">=</span><span class="n">i_str</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">name_info</span><span class="p">[</span><span class="s">&#39;num&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="n">o_fname</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_name&#39;</span><span class="p">]</span> <span class="o">%</span> <span class="n">name_info</span>
+        <span class="n">o_dir</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_path&#39;</span><span class="p">]</span>
+        <span class="n">o_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">o_dir</span><span class="p">,</span> <span class="n">o_fname</span> <span class="o">+</span> <span class="s">&#39;.tar.gz&#39;</span><span class="p">)</span>
+
+        <span class="c"># if dir is missing make it</span>
+        <span class="n">dirname</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">dirname</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">dirname</span><span class="p">):</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">dirname</span><span class="p">)</span>
+
+        <span class="n">t_path2</span> <span class="o">=</span> <span class="n">tarball_export</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">)</span>
+
+        <span class="c"># do an atomic renaming</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;attemping os.rename(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">))</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">EXDEV</span><span class="p">:</span>
+                <span class="n">patient_move</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;failed shutil.copy2(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">) and/or &#39;</span>
+                             <span class="s">&#39;os.remove(t_path)&#39;</span><span class="p">,</span>
+                             <span class="n">t_path2</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">raise</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;failed os.rename(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span>
+                         <span class="n">t_path</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="k">raise</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">t_path</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;failed to os.remove(</span><span class="si">%r</span><span class="s">) --&gt; </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">exc</span><span class="p">))</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;to_local_tarballs created </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">o_path</span><span class="p">)</span>
+
+        <span class="c"># return the final output path</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">o_path</span><span class="p">]</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

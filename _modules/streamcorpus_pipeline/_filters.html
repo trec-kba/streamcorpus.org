@@ -1,0 +1,480 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._filters &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._filters</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Incremental transforms that only pass specific StreamItems.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2014 Diffeo, Inc.</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">from</span> <span class="nn">itertools</span> <span class="kn">import</span> <span class="n">imap</span><span class="p">,</span> <span class="n">chain</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">from</span> <span class="nn">urlparse</span> <span class="kn">import</span> <span class="n">urlparse</span>
+
+<span class="kn">from</span> <span class="nn">backports</span> <span class="kn">import</span> <span class="n">lzma</span>
+
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="dump_stream_id_abs_url"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.dump_stream_id_abs_url">[docs]</a><span class="k">class</span> <span class="nc">dump_stream_id_abs_url</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;print :attr:`~streamcorpus.StreamItem.stream_id`,</span>
+<span class="sd">    :attr:`~streamcorpus.StreamItem.abs_url` strings to stdout and do</span>
+<span class="sd">    not pass any :class:`~streamcorpus.StreamItems` down the pipeline</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;dump_abs_url&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">print</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">abs_url</span>
+        <span class="k">return</span> <span class="bp">None</span>
+
+</div>
+<div class="viewcode-block" id="debug_filter"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.debug_filter">[docs]</a><span class="k">class</span> <span class="nc">debug_filter</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Remove all stream items except specified ones.</span>
+
+<span class="sd">    This is only needed to debug troublesome configurations if there</span>
+<span class="sd">    are problems with specific stream items.  It has one</span>
+<span class="sd">    configuration item:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        accept_stream_ids:</span>
+<span class="sd">          - 1360783522-ebf059defa41b2812c1f969f28cdb45e</span>
+
+<span class="sd">    Only stream IDs in the list are passed on, all others are dropped.</span>
+<span class="sd">    Defaults to an empty list (drop all stream items).</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;debug_filter&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;accept_stream_ids&#39;</span><span class="p">:</span> <span class="p">[]</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;accept_stream_ids&#39;</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="n">si</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+</div>
+<div class="viewcode-block" id="id_filter"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.id_filter">[docs]</a><span class="k">class</span> <span class="nc">id_filter</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Include or exclude specific stream items by doc_id or stream_id</span>
+
+<span class="sd">    If specific stream items have been identified, e.g. as causing</span>
+<span class="sd">    problems with a tagger or other stages, then this can remove them</span>
+<span class="sd">    before they run.  </span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">      id_filter:</span>
+<span class="sd">        excluded_stream_ids_path: file-of-one-stream-id-per-line.txt.xz</span>
+<span class="sd">        excluded_stream_ids:</span>
+<span class="sd">          - 1360783522-ebf059defa41b2812c1f969f28cdb45e</span>
+<span class="sd">        included_stream_ids_path: file-of-one-stream-id-per-line.txt.xz</span>
+<span class="sd">        included_stream_ids:</span>
+<span class="sd">          - 1360783522-ebf059defa41b2812c1f969f28cdb45e</span>
+<span class="sd">        included_doc_ids_path: file-of-one-doc-id-per-line.txt.xz</span>
+<span class="sd">        included_doc_ids:</span>
+<span class="sd">          - ebf059defa41b2812c1f969f28cdb45e</span>
+<span class="sd">        excluded_doc_ids_path: file-of-one-doc-id-per-line.txt.xz</span>
+<span class="sd">        excluded_doc_ids:</span>
+<span class="sd">          - ebf059defa41b2812c1f969f28cdb45e</span>
+
+
+<span class="sd">    Stream IDs in the `excluded_stream_ids` list are dropped, all</span>
+<span class="sd">    others are passed on unmodified.  Defaults to an empty list (don&#39;t</span>
+<span class="sd">    drop any stream items).</span>
+
+<span class="sd">    In addition to listing Stream IDs in the yaml itself, you can pass</span>
+<span class="sd">    `excluded_stream_ids_path` with one Stream ID per line.  This file</span>
+<span class="sd">    can be optionally be xz-compressed.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;id_filter&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> 
+        <span class="s">&#39;excluded_stream_ids&#39;</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="s">&#39;included_stream_ids&#39;</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="s">&#39;excluded_doc_ids&#39;</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="s">&#39;included_doc_ids&#39;</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">id_filter</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">included_doc_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">excluded_doc_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">included_stream_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">excluded_stream_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">mode</span> <span class="ow">in</span> <span class="p">[</span><span class="s">&#39;excluded&#39;</span><span class="p">,</span> <span class="s">&#39;included&#39;</span><span class="p">]:</span>
+            <span class="k">for</span> <span class="n">id_type</span> <span class="ow">in</span> <span class="p">[</span><span class="s">&#39;stream_ids&#39;</span><span class="p">,</span> <span class="s">&#39;doc_ids&#39;</span><span class="p">]:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">configure</span><span class="p">(</span><span class="n">mode</span><span class="p">,</span> <span class="n">id_type</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">configure</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mode</span><span class="p">,</span> <span class="n">id_type</span><span class="p">):</span>
+        <span class="n">mode_type</span> <span class="o">=</span> <span class="s">&#39;</span><span class="si">%s</span><span class="s">_</span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">mode</span><span class="p">,</span> <span class="n">id_type</span><span class="p">)</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">mode_type</span><span class="p">,</span> <span class="p">[]))</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">mode_type</span> <span class="o">+</span> <span class="s">&#39;_path&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">path</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">path</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;.xz&#39;</span><span class="p">):</span>
+                <span class="n">fh</span> <span class="o">=</span> <span class="n">lzma</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">fh</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+            <span class="nb">map</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">add</span><span class="p">,</span> <span class="n">fh</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">())</span>
+        <span class="nb">setattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mode_type</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;finished loading </span><span class="si">%d</span><span class="s"> </span><span class="si">%s</span><span class="s"> to </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="n">id_type</span><span class="p">,</span> <span class="n">mode</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">excluded_stream_ids</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">doc_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">excluded_stream_ids</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">included_stream_ids</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">included_doc_ids</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">included_stream_ids</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">si</span>
+            <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">doc_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">included_doc_ids</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">si</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c">## not filtering by inclusion</span>
+            <span class="k">return</span> <span class="n">si</span>
+</div>
+<div class="viewcode-block" id="filter_languages"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.filter_languages">[docs]</a><span class="k">class</span> <span class="nc">filter_languages</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Remove stream items that aren&#39;t in specific languages.</span>
+
+<span class="sd">    This looks at the :attr:`~streamcorpus.StreamItem.body`</span>
+<span class="sd">    :attr:`~streamcorpus.ContentItem.language` field.  It has</span>
+<span class="sd">    two configuration options:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        filter_languages:</span>
+<span class="sd">          allow_null_language: True</span>
+<span class="sd">          included_language_codes: [en]</span>
+
+<span class="sd">    If the language field is empty, the stream item is dropped unless</span>
+<span class="sd">    `allow_null_language` is true (default value).  Otherwise, the</span>
+<span class="sd">    stream item is dropped unless its language code is one of the</span>
+<span class="sd">    `included_language_codes` values (defaults to empty list).</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;filter_languages&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;allow_null_language&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+                       <span class="s">&#39;included_language_codes&#39;</span><span class="p">:</span> <span class="p">[]</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">language</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;allow_null_language&#39;</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="n">si</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">language</span><span class="o">.</span><span class="n">code</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;included_language_codes&#39;</span><span class="p">]:</span>
+            <span class="k">return</span> <span class="n">si</span>
+        <span class="c">## otherwise return None, which excludes the language</span>
+        <span class="k">return</span> <span class="bp">None</span>
+
+</div>
+<div class="viewcode-block" id="filter_tagger_ids"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.filter_tagger_ids">[docs]</a><span class="k">class</span> <span class="nc">filter_tagger_ids</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Remove stream items that lack a StreamItem.body.sentences entry</span>
+<span class="sd">    from specified tagger_id(s)</span>
+
+<span class="sd">    This looks at the :attr:`~streamcorpus.StreamItem.body.sentences`</span>
+<span class="sd">    field.  It has two configuration options:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        filter_tagger_ids:</span>
+<span class="sd">          tagger_ids_to_keep:</span>
+<span class="sd">            - serif</span>
+
+<span class="sd">    If the none of the tagger_ids_to_keep are in</span>
+<span class="sd">    :attr:`~streamcorpus.StreamItem.body.sentences`, the stream item</span>
+<span class="sd">    is dropped.  If one of the required tagger_ids is present, but</span>
+<span class="sd">    points to an empty list, then it is also dropped.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;filter_tagger_ids&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;tagger_ids_to_keep&#39;</span><span class="p">:</span> <span class="p">[]</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+        <span class="k">for</span> <span class="n">tagger_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tagger_ids_to_keep&#39;</span><span class="p">]:</span>
+            <span class="n">sentences</span> <span class="o">=</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">tagger_id</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">sentences</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">si</span>
+        <span class="k">return</span> <span class="bp">None</span>
+
+</div>
+<div class="viewcode-block" id="remove_raw"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.remove_raw">[docs]</a><span class="k">class</span> <span class="nc">remove_raw</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Remove the raw form of the content.</span>
+
+<span class="sd">    While the :attr:`~streamcorpus.StreamItem.body`</span>
+<span class="sd">    :attr:`~streamcorpus.ContentItem.raw` form is important as inputs</span>
+<span class="sd">    to create the &quot;clean&quot; forms, it may be bulky and not useful later.</span>
+<span class="sd">    This strips the raw form, replacing it with an empty string.  It</span>
+<span class="sd">    has one configuration option:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        remove_raw:</span>
+<span class="sd">          if_clean_visible_remove_raw: True</span>
+
+<span class="sd">    If `if_clean_visible_remove_raw` is set (defaults to false),</span>
+<span class="sd">    the raw form is only removed if the clean\_visible form is</span>
+<span class="sd">    available; otherwise it is always removed.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;remove_raw&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;if_clean_visible_remove_raw&#39;</span><span class="p">:</span> <span class="bp">False</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;if_clean_visible_remove_raw&#39;</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">:</span>
+                <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+            <span class="c">## otherwise leave body.raw unchanged</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+
+        <span class="k">return</span> <span class="n">si</span>
+
+</div>
+<div class="viewcode-block" id="replace_raw"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.replace_raw">[docs]</a><span class="k">class</span> <span class="nc">replace_raw</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Replace the `raw` form of the content with `clean_html`, or delete</span>
+<span class="sd">    the StreamItem if it lacks `clean_html`.</span>
+
+<span class="sd">    While the :attr:`~streamcorpus.StreamItem.body`</span>
+<span class="sd">    :attr:`~streamcorpus.ContentItem.raw` form is important as inputs</span>
+<span class="sd">    to create the &quot;clean&quot; forms, it may be bulky and not useful later.</span>
+<span class="sd">    This strips the raw form, replacing it with clean_html.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;replace_raw&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span><span class="p">:</span>
+            <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span> <span class="o">=</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span>
+            <span class="k">return</span> <span class="n">si</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span> <span class="c"># delete</span>
+
+</div>
+<span class="k">def</span> <span class="nf">domain_name_cleanse</span><span class="p">(</span><span class="n">raw_string</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;extract a lower-case, no-slashes domain name from a raw string</span>
+<span class="sd">    that might be a URL</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="n">urlparse</span><span class="p">(</span><span class="n">raw_string</span><span class="p">)</span>
+        <span class="n">domain</span> <span class="o">=</span> <span class="n">parts</span><span class="o">.</span><span class="n">netloc</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;:&#39;</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="n">domain</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">domain</span><span class="p">:</span>
+        <span class="n">domain</span> <span class="o">=</span> <span class="n">raw_string</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">domain</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s">&#39;&#39;</span>
+    <span class="n">domain</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s">&#39;\/&#39;</span><span class="p">,</span> <span class="s">&#39;&#39;</span><span class="p">,</span> <span class="n">domain</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span>
+    <span class="k">return</span> <span class="n">domain</span>
+
+<span class="k">def</span> <span class="nf">domain_name_left_cuts</span><span class="p">(</span><span class="n">domain</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;returns a list of strings created by splitting the domain on</span>
+<span class="sd">    &#39;.&#39; and successively cutting off the left most portion</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">cuts</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">if</span> <span class="n">domain</span><span class="p">:</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="n">domain</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;.&#39;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">parts</span><span class="p">)):</span>
+            <span class="n">cuts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="s">&#39;.&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">[</span><span class="n">i</span><span class="p">:]))</span>
+    <span class="k">return</span> <span class="n">cuts</span>
+
+<div class="viewcode-block" id="filter_domains"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.filter_domains">[docs]</a><span class="k">class</span> <span class="nc">filter_domains</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Remove stream items that are not from a specific domain by</span>
+<span class="sd">    inspecting first :attr:`~StreamItem.abs_url` and then</span>
+<span class="sd">    :attr:`~StreamItem.schost`.  domain name strings are cleansed.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        filter_domains:</span>
+<span class="sd">          include_domains: [example.com]</span>
+<span class="sd">          include_domains_path:</span>
+<span class="sd">          - path-to-file-with-one-domain-per-line.txt</span>
+<span class="sd">          - path-to-file-with-one-domain-per-line2.txt</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;filter_domains&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;include_domains&#39;</span><span class="p">:</span> <span class="p">[]</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">filter_domains</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="c">## cleanse the input domains lists</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">domains</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="n">include_domains</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;include_domains&#39;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="nb">map</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">domains</span><span class="o">.</span><span class="n">add</span><span class="p">,</span> <span class="n">imap</span><span class="p">(</span><span class="n">domain_name_cleanse</span><span class="p">,</span> <span class="n">include_domains</span><span class="p">))</span>
+
+        <span class="n">include_domains_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;include_domains_path&#39;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">include_domains_path</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="n">include_domains_path</span> <span class="o">=</span> <span class="p">[</span><span class="n">include_domains_path</span><span class="p">]</span>
+        <span class="nb">map</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">domains</span><span class="o">.</span><span class="n">add</span><span class="p">,</span> <span class="n">imap</span><span class="p">(</span>
+                <span class="n">domain_name_cleanse</span><span class="p">,</span> 
+                <span class="n">chain</span><span class="p">(</span><span class="o">*</span><span class="n">imap</span><span class="p">(</span><span class="nb">open</span><span class="p">,</span> <span class="n">include_domains_path</span><span class="p">))))</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;filter_domains configured with </span><span class="si">%d</span><span class="s"> domain names&#39;</span><span class="p">,</span>
+                    <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">domains</span><span class="p">))</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;filter_domains.domains = </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">domains</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="n">url_things</span> <span class="o">=</span> <span class="p">[</span><span class="n">si</span><span class="o">.</span><span class="n">abs_url</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">schost</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">thing</span> <span class="ow">in</span> <span class="n">url_things</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">thing</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="k">for</span> <span class="n">cut</span> <span class="ow">in</span> <span class="n">domain_name_left_cuts</span><span class="p">(</span><span class="n">domain_name_cleanse</span><span class="p">(</span><span class="n">thing</span><span class="p">)):</span>
+                <span class="k">if</span> <span class="n">cut</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">domains</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;found: </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">cut</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="n">si</span>
+
+        <span class="c">## otherwise return None, which excludes the stream item</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;rejecting: </span><span class="si">%r</span><span class="s"> </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">schost</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">abs_url</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">None</span>
+
+</div>
+<div class="viewcode-block" id="filter_domains_substrings"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._filters.filter_domains_substrings">[docs]</a><span class="k">class</span> <span class="nc">filter_domains_substrings</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Remove stream items that are not from a domain whose name contains</span>
+<span class="sd">    one of the specified strings by inspecting first</span>
+<span class="sd">    :attr:`~StreamItem.abs_url` and then :attr:`~StreamItem.schost`.</span>
+<span class="sd">    Substrings are used exactly as provided without cleansing.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        filter_domains_matching:</span>
+<span class="sd">          include_substrings: [example]</span>
+<span class="sd">          include_substrings_path:</span>
+<span class="sd">          - path-to-file-with-one-substring-per-line.txt</span>
+<span class="sd">          - path-to-file-with-one-substring-per-line2.txt</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;filter_domains_substrings&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;include_substrings&#39;</span><span class="p">:</span> <span class="p">[]</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">filter_domains_substrings</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+        <span class="c">## cleanse the input substrings lists</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">substrings</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="n">include_substrings</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;include_substrings&#39;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="nb">map</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">substrings</span><span class="o">.</span><span class="n">add</span><span class="p">,</span> <span class="n">include_substrings</span><span class="p">)</span>
+
+        <span class="n">include_substrings_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;include_substrings_path&#39;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">include_substrings_path</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="n">include_substrings_path</span> <span class="o">=</span> <span class="p">[</span><span class="n">include_substrings_path</span><span class="p">]</span>
+        <span class="nb">map</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">substrings</span><span class="o">.</span><span class="n">add</span><span class="p">,</span> 
+            <span class="n">imap</span><span class="p">(</span><span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="n">s</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span> 
+                 <span class="n">chain</span><span class="p">(</span><span class="o">*</span><span class="n">imap</span><span class="p">(</span><span class="nb">open</span><span class="p">,</span> <span class="n">include_substrings_path</span><span class="p">))))</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;filter_substrings configured with </span><span class="si">%d</span><span class="s"> domain names&#39;</span><span class="p">,</span>
+                    <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">substrings</span><span class="p">))</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;filter_domans_substrings.substrings = </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">substrings</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="n">url_things</span> <span class="o">=</span> <span class="p">[</span><span class="n">si</span><span class="o">.</span><span class="n">abs_url</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">schost</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">thing</span> <span class="ow">in</span> <span class="n">url_things</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">thing</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="k">for</span> <span class="n">substr</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">substrings</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">substr</span> <span class="ow">in</span> <span class="n">thing</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;found: </span><span class="si">%r</span><span class="s"> in </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">substr</span><span class="p">,</span> <span class="n">thing</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="n">si</span>
+
+        <span class="c">## otherwise return None, which excludes the stream item</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;rejecting: </span><span class="si">%r</span><span class="s"> </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">schost</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">abs_url</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">None</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

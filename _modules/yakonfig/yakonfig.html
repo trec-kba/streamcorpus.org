@@ -1,0 +1,261 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>yakonfig.yakonfig &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for yakonfig.yakonfig</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Global configuration state.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2013-2014 Diffeo, Inc.</span>
+
+<span class="sd">This maintains a global configuration dictionary.</span>
+<span class="sd">:func:`get_global_config` will get the entire dictionary, or specific</span>
+<span class="sd">keys from it.</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">collections</span>
+<span class="kn">import</span> <span class="nn">contextlib</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+
+<span class="kn">from</span> <span class="nn">six</span> <span class="kn">import</span> <span class="n">string_types</span>
+<span class="kn">import</span> <span class="nn">yaml</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="s">&#39;yakonfig&#39;</span><span class="p">)</span>
+
+<span class="n">_config_file_path</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="n">_config_cache</span> <span class="o">=</span> <span class="bp">None</span>
+
+
+<span class="k">class</span> <span class="nc">Loader</span><span class="p">(</span><span class="n">yaml</span><span class="o">.</span><span class="n">Loader</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;YAML loader aware of yakonfig extensions.&#39;&#39;&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream</span><span class="p">):</span>
+        <span class="c"># find root path for !include relative path</span>
+        <span class="n">streamname</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">stream</span><span class="p">,</span> <span class="s">&#39;name&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">streamname</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_root</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">streamname</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_root</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">Loader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">stream</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">include_yaml</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        load another yaml file from the path specified by node&#39;s value</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">filename</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">construct_scalar</span><span class="p">(</span><span class="n">node</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">filename</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">):</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_root</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;!include_yaml </span><span class="si">%s</span><span class="s"> is a relative path, &#39;</span>
+                                <span class="s">&#39;but stream lacks path&#39;</span> <span class="o">%</span> <span class="n">filename</span><span class="p">)</span>
+            <span class="n">filename</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_root</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">construct_scalar</span><span class="p">(</span><span class="n">node</span><span class="p">))</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="n">filename</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">fin</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">yaml</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">fin</span><span class="p">,</span> <span class="n">Loader</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        method that looks like the regular python builtin `open`, and</span>
+<span class="sd">        an be replaced by tests with different behavior</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="nb">open</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<span class="n">Loader</span><span class="o">.</span><span class="n">add_constructor</span><span class="p">(</span><span class="s">&#39;!include_yaml&#39;</span><span class="p">,</span> <span class="n">Loader</span><span class="o">.</span><span class="n">include_yaml</span><span class="p">)</span>
+<span class="n">Loader</span><span class="o">.</span><span class="n">add_constructor</span><span class="p">(</span><span class="s">&#39;!include&#39;</span><span class="p">,</span> <span class="n">Loader</span><span class="o">.</span><span class="n">include_yaml</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="clear_global_config"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.clear_global_config">[docs]</a><span class="k">def</span> <span class="nf">clear_global_config</span><span class="p">():</span>
+    <span class="sd">&#39;&#39;&#39;Reset the global configuration to an empty state.&#39;&#39;&#39;</span>
+    <span class="k">global</span> <span class="n">_config_cache</span><span class="p">,</span> <span class="n">_config_file_path</span>
+    <span class="n">_config_cache</span> <span class="o">=</span> <span class="bp">None</span>
+    <span class="n">_config_file_path</span> <span class="o">=</span> <span class="bp">None</span>
+
+</div>
+<div class="viewcode-block" id="set_global_config"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.set_global_config">[docs]</a><span class="k">def</span> <span class="nf">set_global_config</span><span class="p">(</span><span class="n">path_dict_or_stream</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Set the global configuration.</span>
+
+<span class="sd">    Call this from `main()` with a file system path, stream</span>
+<span class="sd">    object, or a dict.  Calling it repeatedly with the same path is</span>
+<span class="sd">    safe.  Calling it with a different path or repeatedly with a</span>
+<span class="sd">    stream or dict requires an explicit call to :func:`clear_global_config`.</span>
+
+<span class="sd">    :param path_dict_or_stream: source of configuration</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="bp">None</span>
+    <span class="n">mapping</span> <span class="o">=</span> <span class="bp">None</span>
+    <span class="n">stream</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">global</span> <span class="n">_config_file_path</span>
+    <span class="k">global</span> <span class="n">_config_cache</span>
+
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">path_dict_or_stream</span><span class="p">,</span> <span class="n">string_types</span><span class="p">):</span>
+        <span class="n">path</span> <span class="o">=</span> <span class="n">path_dict_or_stream</span>
+        <span class="k">if</span> <span class="n">_config_file_path</span> <span class="ow">and</span> <span class="n">_config_file_path</span> <span class="o">!=</span> <span class="n">path</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;set_global_config(</span><span class="si">%r</span><span class="s">) differs from </span><span class="si">%r</span><span class="s">, &#39;</span>
+                            <span class="s">&#39;consider calling clear_global_config first&#39;</span> <span class="o">%</span>
+                            <span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">_config_file_path</span><span class="p">))</span>
+        <span class="n">_config_file_path</span> <span class="o">=</span> <span class="n">path</span>
+        <span class="n">stream</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">)</span>
+
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">path_dict_or_stream</span><span class="p">,</span> <span class="n">collections</span><span class="o">.</span><span class="n">Mapping</span><span class="p">):</span>
+        <span class="n">mapping</span> <span class="o">=</span> <span class="n">path_dict_or_stream</span>
+
+    <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">path_dict_or_stream</span><span class="p">,</span> <span class="s">&#39;read&#39;</span><span class="p">):</span>
+        <span class="n">stream</span> <span class="o">=</span> <span class="n">path_dict_or_stream</span>
+
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;set_global_config(</span><span class="si">%r</span><span class="s">) instead of a path, &#39;</span>
+                        <span class="s">&#39;mapping object, or stream open for reading&#39;</span> <span class="o">%</span>
+                        <span class="n">path_dict_or_stream</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">stream</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">mapping</span> <span class="o">=</span> <span class="n">yaml</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">stream</span><span class="p">,</span> <span class="n">Loader</span><span class="p">)</span>
+
+    <span class="n">_config_cache</span> <span class="o">=</span> <span class="n">mapping</span>
+
+    <span class="c"># TODO: convert to frozen dict?</span>
+    <span class="k">return</span> <span class="n">_config_cache</span>
+
+</div>
+<div class="viewcode-block" id="get_global_config"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.get_global_config">[docs]</a><span class="k">def</span> <span class="nf">get_global_config</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Get (a subset of) the global configuration.</span>
+
+<span class="sd">    If no arguments are provided, returns the entire configuration.</span>
+<span class="sd">    Otherwise, start with the entire configuration, and get the item</span>
+<span class="sd">    named by the first parameter; then search that for the second</span>
+<span class="sd">    parameter; and so on.</span>
+
+<span class="sd">    :param args: configuration name path to fetch</span>
+<span class="sd">    :return: configuration item or subtree</span>
+<span class="sd">    :raise KeyError: if an argument is missing</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">global</span> <span class="n">_config_cache</span>
+    <span class="n">c</span> <span class="o">=</span> <span class="n">_config_cache</span>
+    <span class="k">if</span> <span class="n">c</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">args</span> <span class="o">=</span> <span class="p">(</span><span class="bp">None</span><span class="p">,)</span>
+        <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span>
+    <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">args</span><span class="p">:</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">c</span><span class="p">[</span><span class="n">a</span><span class="p">]</span>
+    <span class="k">return</span> <span class="n">c</span>
+
+</div>
+<span class="nd">@contextlib.contextmanager</span>
+<span class="k">def</span> <span class="nf">_temporary_config</span><span class="p">():</span>
+    <span class="sd">&#39;&#39;&#39;Temporarily replace the global configuration.</span>
+
+<span class="sd">    Use this in a &#39;with&#39; statement.  The inner block may freely manipulate</span>
+<span class="sd">    the global configuration; the original global configuration is restored</span>
+<span class="sd">    at exit.</span>
+
+<span class="sd">    &gt;&gt;&gt; with yakonfig.yakonfig._temporary_config():</span>
+<span class="sd">    ...   yakonfig.yakonfig.set_global_config({&#39;a&#39;: &#39;b&#39;})</span>
+<span class="sd">    ...   print yakonfig.yakonfig.get_global_config(&#39;a&#39;)</span>
+<span class="sd">    b</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">global</span> <span class="n">_config_cache</span><span class="p">,</span> <span class="n">_config_file_path</span>
+    <span class="n">old_cc</span> <span class="o">=</span> <span class="n">_config_cache</span>
+    <span class="n">old_cfp</span> <span class="o">=</span> <span class="n">_config_file_path</span>
+    <span class="n">clear_global_config</span><span class="p">()</span>
+    <span class="k">yield</span>
+    <span class="n">_config_cache</span> <span class="o">=</span> <span class="n">old_cc</span>
+    <span class="n">_config_file_path</span> <span class="o">=</span> <span class="n">old_cfp</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

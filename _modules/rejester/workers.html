@@ -1,0 +1,1125 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>rejester.workers &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for rejester.workers</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Rejester workers.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2014 Diffeo, Inc.</span>
+
+<span class="sd">The standard worker infrastructure in the classes below calls</span>
+<span class="sd">:meth:`rejester.WorkUnit.run` on individual work units as they become</span>
+<span class="sd">available.  In normal use, a caller will use</span>
+<span class="sd">:meth:`rejester.TaskMaster.update_bundle` to submit jobs, then expect</span>
+<span class="sd">an external caller to run ``rejester run_worker``, which will create a</span>
+<span class="sd">:class:`MultiWorker` object that runs those jobs.</span>
+
+<span class="sd">Other implementation strategies are definitely possible.  The</span>
+<span class="sd">:class:`SingleWorker` class here will run exactly one job when</span>
+<span class="sd">invoked.  It is also possible for a program that intends to do some</span>
+<span class="sd">work, possibly even in parallel, but wants to depend on rejester for</span>
+<span class="sd">queueing, to call :meth:`rejester.TaskMaster.get_work` itself and do</span>
+<span class="sd">work based on whatever information is in the work spec; that would not</span>
+<span class="sd">use this worker infrastructure at all.</span>
+
+<span class="sd">.. autoclass:: SingleWorker</span>
+<span class="sd">    :members:</span>
+<span class="sd">    :show-inheritance:</span>
+
+<span class="sd">.. autoclass:: MultiWorker</span>
+<span class="sd">    :members:</span>
+<span class="sd">    :show-inheritance:</span>
+
+<span class="sd">.. autoclass:: HeadlessWorker</span>
+<span class="sd">    :members:</span>
+<span class="sd">    :show-inheritance:</span>
+
+<span class="sd">.. autoclass:: ForkWorker</span>
+<span class="sd">    :members:</span>
+<span class="sd">    :show-inheritance:</span>
+
+<span class="sd">.. autofunction:: run_worker</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">errno</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">multiprocessing</span>
+<span class="kn">from</span> <span class="nn">operator</span> <span class="kn">import</span> <span class="n">itemgetter</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">psutil</span>
+<span class="kn">import</span> <span class="nn">random</span>
+<span class="kn">import</span> <span class="nn">Queue</span>
+<span class="kn">import</span> <span class="nn">signal</span>
+<span class="kn">import</span> <span class="nn">struct</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">threading</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+
+<span class="kn">from</span> <span class="nn">setproctitle</span> <span class="kn">import</span> <span class="n">setproctitle</span>
+
+<span class="kn">import</span> <span class="nn">dblogger</span>
+<span class="kn">import</span> <span class="nn">rejester</span>
+<span class="kn">from</span> <span class="nn">rejester._task_master</span> <span class="kn">import</span> <span class="n">build_task_master</span>
+<span class="kn">from</span> <span class="nn">rejester</span> <span class="kn">import</span> <span class="n">Worker</span>
+<span class="kn">from</span> <span class="nn">rejester.exceptions</span> <span class="kn">import</span> <span class="n">LostLease</span>
+<span class="kn">from</span> <span class="nn">rejester._registry</span> <span class="kn">import</span> <span class="n">nice_identifier</span>
+<span class="kn">import</span> <span class="nn">yakonfig</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">test_work_program</span><span class="p">(</span><span class="n">work_unit</span><span class="p">):</span>
+    <span class="c"># just to show that this works, we get the config from the data</span>
+    <span class="c"># and *reconnect* to the registry with a second instances instead</span>
+    <span class="c"># of using work_unit.registry</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;config&#39;</span><span class="p">]</span>
+    <span class="n">sleeptime</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;sleep&#39;</span><span class="p">,</span> <span class="mf">9.0</span><span class="p">))</span>
+    <span class="n">task_master</span> <span class="o">=</span> <span class="n">build_task_master</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;executing work_unit </span><span class="si">%r</span><span class="s"> ... </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">sleeptime</span><span class="p">)</span>
+    <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">sleeptime</span><span class="p">)</span>  <span class="c"># pretend to work</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;finished </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">work_unit</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="run_worker"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.run_worker">[docs]</a><span class="k">def</span> <span class="nf">run_worker</span><span class="p">(</span><span class="n">worker_class</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Bridge function to run a worker under :mod:`multiprocessing`.</span>
+
+<span class="sd">    The :mod:`multiprocessing` module cannot</span>
+<span class="sd">    :meth:`~multiprocessing.Pool.apply_async` to a class constructor,</span>
+<span class="sd">    even if the ``__init__`` calls ``.run()``, so this simple wrapper</span>
+<span class="sd">    calls ``worker_class(*args, **kwargs)`` and logs any exceptions</span>
+<span class="sd">    before re-raising them.</span>
+
+<span class="sd">    This is usually only used to create a :class:`HeadlessWorker`, but</span>
+<span class="sd">    it does run through the complete</span>
+<span class="sd">    :meth:`~rejester.Worker.register`, :meth:`~rejester.Worker.run`,</span>
+<span class="sd">    :meth:`~rejester.Worker.unregister` sequence with some logging</span>
+<span class="sd">    on worker-level failures.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">worker</span> <span class="o">=</span> <span class="n">worker_class</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;failed to create worker {0!r}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">worker_class</span><span class="p">),</span>
+                        <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+        <span class="k">raise</span>
+    <span class="c"># A note on style here:</span>
+    <span class="c">#</span>
+    <span class="c"># If this runs ForkWorker, ForkWorker will os.fork() LoopWorker</span>
+    <span class="c"># (or SingleWorker) children, and the child will have this in its</span>
+    <span class="c"># call stack.  Eventually the child will sys.exit(), which raises</span>
+    <span class="c"># SystemExit, which is an exception that will trickle back through</span>
+    <span class="c"># here.  If there is a try:...finally: block, the finally: block</span>
+    <span class="c"># will execute on every child exit.  except Exception: won&#39;t run</span>
+    <span class="c"># on SystemExit.</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">worker</span><span class="o">.</span><span class="n">register</span><span class="p">()</span>
+        <span class="n">worker</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+        <span class="n">worker</span><span class="o">.</span><span class="n">unregister</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;worker {0!r} died&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">worker_class</span><span class="p">),</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">unregister</span><span class="p">()</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="k">pass</span>
+        <span class="k">raise</span>
+
+</div>
+<div class="viewcode-block" id="HeadlessWorker"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.HeadlessWorker">[docs]</a><span class="k">class</span> <span class="nc">HeadlessWorker</span><span class="p">(</span><span class="n">Worker</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Child worker to do work under :mod:`multiprocessing`.</span>
+
+<span class="sd">    The :meth:`run` method expects to run a single</span>
+<span class="sd">    :class:`~rejester.WorkUnit`, which it will receive from its</span>
+<span class="sd">    parent :class:`MultiWorker`.  This class expects to be the only</span>
+<span class="sd">    thing run in a :mod:`multiprocessing` child process.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">worker_id</span><span class="p">,</span> <span class="n">work_spec_name</span><span class="p">,</span> <span class="n">work_unit_key</span><span class="p">):</span>
+        <span class="c"># Do a complete reset of logging right now before we do anything else.</span>
+        <span class="c">#</span>
+        <span class="c"># multiprocessing.Pool is super super asynchronous: when you</span>
+        <span class="c"># apply_async() your job description goes into a queue, which</span>
+        <span class="c"># a thread moves to another queue, a second thread tries every</span>
+        <span class="c"># 0.1s to make sure the subprocesses exist, and the subprocess</span>
+        <span class="c"># actually pulls the job off the queue.  If your main thread is</span>
+        <span class="c"># doing something when that 0.1s timer fires, it&#39;s possible that</span>
+        <span class="c"># the os.fork()ed child is actually forked holding some lock from</span>
+        <span class="c"># the parent.</span>
+        <span class="c">#</span>
+        <span class="c"># See:  http://bugs.python.org/issue6721</span>
+        <span class="c">#</span>
+        <span class="c"># logging seems to be the most prominent thing that causes</span>
+        <span class="c"># trouble here.  There is both a global logging._lock,</span>
+        <span class="c"># plus every logging.Handler instance has a lock.  If we just</span>
+        <span class="c"># clean up these locks we&#39;ll be good.</span>
+        <span class="n">logging</span><span class="o">.</span><span class="n">_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">RLock</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="n">logging</span><span class="o">.</span><span class="n">_handlers</span><span class="o">.</span><span class="n">itervalues</span><span class="p">():</span>
+            <span class="n">handler</span><span class="o">.</span><span class="n">createLock</span><span class="p">()</span>
+
+        <span class="c"># Now go on as normal</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">HeadlessWorker</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">sig_num</span> <span class="ow">in</span> <span class="p">[</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">SIGHUP</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">SIGABRT</span><span class="p">]:</span>
+            <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">sig_num</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">terminate</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">get_assigned_work_unit</span><span class="p">(</span>
+            <span class="n">worker_id</span><span class="p">,</span> <span class="n">work_spec_name</span><span class="p">,</span> <span class="n">work_unit_key</span><span class="p">)</span>
+        <span class="c"># carry this to overwrite self.worker_id after .register()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pre_assigned_worker_id</span> <span class="o">=</span> <span class="n">worker_id</span>
+
+    <span class="k">def</span> <span class="nf">register</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">HeadlessWorker</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">register</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">worker_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pre_assigned_worker_id</span>
+
+    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">terminate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sig_num</span><span class="p">,</span> <span class="n">frame</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;received </span><span class="si">%d</span><span class="s">, ending work unit&#39;</span><span class="p">,</span> <span class="n">sig_num</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span><span class="o">.</span><span class="n">terminate</span><span class="p">()</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">()</span>
+
+</div>
+<div class="viewcode-block" id="MultiWorker"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.MultiWorker">[docs]</a><span class="k">class</span> <span class="nc">MultiWorker</span><span class="p">(</span><span class="n">Worker</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Parent worker that runs multiple jobs continuously.</span>
+
+<span class="sd">    This uses :mod:`multiprocessing` to run one child</span>
+<span class="sd">    :class:`HeadlessWorker` per core on the system, and averages</span>
+<span class="sd">    system memory to report `available_gb`.  This class manages the</span>
+<span class="sd">    :class:`~rejester.TaskMaster` interactions and sends</span>
+<span class="sd">    :class:`~rejester.WorkUnit` instances to its managed child</span>
+<span class="sd">    processes.</span>
+
+<span class="sd">    This class is normally invoked from the command line by</span>
+<span class="sd">    running ``rejester run_worker``, which runs this class as a</span>
+<span class="sd">    daemon process.</span>
+
+<span class="sd">    Instances of this class, running across many machines in a</span>
+<span class="sd">    cluster, are controlled by :meth:`rejester.TaskMaster.get_mode`.</span>
+<span class="sd">    The :meth:`run` method will exit if the current mode is</span>
+<span class="sd">    :attr:`~rejester.TaskMaster.TERMINATE`.  If the mode is</span>
+<span class="sd">    :attr:`~rejester.TaskMaster.IDLE` then the worker will stay</span>
+<span class="sd">    running but will not start new jobs.  New jobs will be started</span>
+<span class="sd">    only when the mode becomes :attr:`~rejester.TaskMaster.RUN`.  The</span>
+<span class="sd">    system defaults to :attr:`~rejester.TaskMaster.IDLE` state, but if</span>
+<span class="sd">    workers exit immediately, it may be because the mode has been left</span>
+<span class="sd">    at :attr:`~rejester.TaskMaster.TERMINATE` from a previous</span>
+<span class="sd">    execution.</span>
+
+<span class="sd">    If `tasks_per_cpu` is set in the configuration block for rejester,</span>
+<span class="sd">    then that many child process will be launched for each CPU on the</span>
+<span class="sd">    machine.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">MultiWorker</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_event_queue</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">Queue</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pool</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;MultiWorker initialized&#39;</span><span class="p">)</span>
+
+    <span class="n">_available_gb</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">available_gb</span><span class="p">(</span><span class="n">cls</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">cls</span><span class="o">.</span><span class="n">_available_gb</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">mem</span> <span class="o">=</span> <span class="n">psutil</span><span class="o">.</span><span class="n">virtual_memory</span><span class="p">()</span>
+            <span class="n">cls</span><span class="o">.</span><span class="n">_available_gb</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">mem</span><span class="o">.</span><span class="n">available</span><span class="p">)</span> <span class="o">/</span> <span class="p">(</span><span class="n">multiprocessing</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span> <span class="o">*</span> <span class="mi">2</span><span class="o">**</span><span class="mi">30</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">cls</span><span class="o">.</span><span class="n">_available_gb</span>
+
+    <span class="k">def</span> <span class="nf">_finish_callback</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="c"># We don&#39;t actually get anything useful from the work call, so</span>
+        <span class="c"># just post an event that causes us to wake up and poll all</span>
+        <span class="c"># the slots.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_event_queue</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="bp">True</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_poll_async_result</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">async_result</span><span class="p">,</span> <span class="n">work_unit</span><span class="p">,</span> <span class="n">do_update</span><span class="o">=</span><span class="bp">True</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">async_result</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="k">assert</span> <span class="n">work_unit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">async_result</span><span class="o">.</span><span class="n">ready</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">do_update</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;not ready </span><span class="si">%r</span><span class="s">, update&#39;</span><span class="p">,</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">key</span><span class="p">)</span>
+                <span class="n">work_unit</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+            <span class="k">return</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">async_result</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">TimeoutError</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">do_update</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;get timeout update </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">key</span><span class="p">)</span>
+                <span class="n">work_unit</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+            <span class="k">return</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;trapped child exception&#39;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="n">work_unit</span><span class="o">.</span><span class="n">fail</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c">## if it gets here, slot should always be finished</span>
+            <span class="k">assert</span> <span class="n">async_result</span><span class="o">.</span><span class="n">ready</span><span class="p">()</span>
+            <span class="n">work_unit</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+        <span class="c">## either failed or finished</span>
+        <span class="k">assert</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">failed</span> <span class="ow">or</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">finished</span>
+
+    <span class="k">def</span> <span class="nf">_get_and_start_work</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="s">&quot;return (async_result, work_unit) or (None, None)&quot;</span>
+        <span class="n">worker_id</span> <span class="o">=</span> <span class="n">nice_identifier</span><span class="p">()</span>
+        <span class="n">work_unit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">get_work</span><span class="p">(</span><span class="n">worker_id</span><span class="p">,</span> <span class="n">available_gb</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">available_gb</span><span class="p">())</span>
+        <span class="k">if</span> <span class="n">work_unit</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span><span class="p">,</span> <span class="bp">None</span>
+        <span class="n">async_result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="o">.</span><span class="n">apply_async</span><span class="p">(</span>
+            <span class="n">run_worker</span><span class="p">,</span>
+            <span class="p">(</span><span class="n">HeadlessWorker</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">registry</span><span class="o">.</span><span class="n">config</span><span class="p">,</span>
+             <span class="n">worker_id</span><span class="p">,</span>
+             <span class="n">work_unit</span><span class="o">.</span><span class="n">work_spec_name</span><span class="p">,</span>
+             <span class="n">work_unit</span><span class="o">.</span><span class="n">key</span><span class="p">),</span>
+            <span class="n">callback</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">_finish_callback</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">async_result</span><span class="p">,</span> <span class="n">work_unit</span>
+
+    <span class="k">def</span> <span class="nf">_poll_slots</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">slots</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">do_update</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+        <span class="n">hasWork</span> <span class="o">=</span> <span class="bp">True</span>
+        <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">slots</span><span class="p">)):</span>
+            <span class="n">async_result</span><span class="p">,</span> <span class="n">work_unit</span> <span class="o">=</span> <span class="n">slots</span><span class="p">[</span><span class="n">i</span><span class="p">]</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">async_result</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">work_unit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_poll_async_result</span><span class="p">(</span><span class="n">async_result</span><span class="p">,</span> <span class="n">work_unit</span><span class="p">,</span> <span class="n">do_update</span><span class="o">=</span><span class="n">do_update</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">failed</span> <span class="ow">or</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">finished</span><span class="p">:</span>
+                    <span class="n">slots</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="bp">None</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">slots</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">mode</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">RUN</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">hasWork</span><span class="p">:</span>
+                    <span class="n">slots</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_and_start_work</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">slots</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                        <span class="c"># If we fail to get work, don&#39;t hammer the</span>
+                        <span class="c"># taskmaster with requests for work. Wait</span>
+                        <span class="c"># until after a sleep and the next _poll_slots</span>
+                        <span class="c"># cycle.</span>
+                        <span class="n">hasWork</span> <span class="o">=</span> <span class="bp">False</span>
+
+<div class="viewcode-block" id="MultiWorker.run"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.MultiWorker.run">[docs]</a>    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Fetch and dispatch jobs as long as the system is running.</span>
+
+<span class="sd">        This periodically checks the :class:`rejester.TaskMaster` mode</span>
+<span class="sd">        and asks it for more work.  It will normally run forever in a</span>
+<span class="sd">        loop until the mode becomes</span>
+<span class="sd">        :attr:`~rejester.TaskMaster.TERMINATE`, at which point it</span>
+<span class="sd">        waits for all outstanding jobs to finish and exits.</span>
+
+<span class="sd">        This will :func:`~rejester.Worker.heartbeat` and check for new</span>
+<span class="sd">        work whenever a job finishes, or otherwise on a random</span>
+<span class="sd">        interval between 1 and 5 seconds.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+
+        <span class="n">tm</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span>
+        <span class="n">num_workers</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">cpu_count</span><span class="p">()</span>
+        <span class="k">if</span> <span class="s">&#39;tasks_per_cpu&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">:</span>
+            <span class="n">num_workers</span> <span class="o">*=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;tasks_per_cpu&#39;</span><span class="p">)</span> <span class="ow">or</span> <span class="mi">1</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">pool</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">pool</span> <span class="o">=</span> <span class="n">multiprocessing</span><span class="o">.</span><span class="n">Pool</span><span class="p">(</span><span class="n">num_workers</span><span class="p">,</span> <span class="n">maxtasksperchild</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="c">## slots is a fixed-length list of [AsyncRsults, WorkUnit]</span>
+        <span class="n">slots</span> <span class="o">=</span> <span class="p">[[</span><span class="bp">None</span><span class="p">,</span> <span class="bp">None</span><span class="p">]]</span> <span class="o">*</span> <span class="n">num_workers</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;MultiWorker starting with </span><span class="si">%s</span><span class="s"> workers&#39;</span><span class="p">,</span> <span class="n">num_workers</span><span class="p">)</span>
+        <span class="n">min_loop_time</span> <span class="o">=</span> <span class="mf">2.0</span>
+        <span class="n">lastFullPoll</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="n">mode</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">heartbeat</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">mode</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;worker {0} changed to mode {1}&#39;</span>
+                            <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">worker_id</span><span class="p">,</span> <span class="n">mode</span><span class="p">))</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_mode</span> <span class="o">=</span> <span class="n">mode</span>
+            <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+            <span class="n">should_update</span> <span class="o">=</span> <span class="p">(</span><span class="n">now</span> <span class="o">-</span> <span class="n">lastFullPoll</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">min_loop_time</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_poll_slots</span><span class="p">(</span><span class="n">slots</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="n">mode</span><span class="p">,</span> <span class="n">do_update</span><span class="o">=</span><span class="n">should_update</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">should_update</span><span class="p">:</span>
+                <span class="n">lastFullPoll</span> <span class="o">=</span> <span class="n">now</span>
+
+            <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="n">tm</span><span class="o">.</span><span class="n">TERMINATE</span><span class="p">:</span>
+                <span class="n">num_waiting</span> <span class="o">=</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">map</span><span class="p">(</span><span class="nb">int</span><span class="p">,</span> <span class="nb">map</span><span class="p">(</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">map</span><span class="p">(</span><span class="n">itemgetter</span><span class="p">(</span><span class="mi">0</span><span class="p">),</span> <span class="n">slots</span><span class="p">))))</span>
+                <span class="k">if</span> <span class="n">num_waiting</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;MultiWorker all children finished&#39;</span><span class="p">)</span>
+                    <span class="k">break</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;MultiWorker waiting for </span><span class="si">%d</span><span class="s"> children to finish&#39;</span><span class="p">,</span> <span class="n">num_waiting</span><span class="p">)</span>
+
+            <span class="n">sleepsecs</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">5</span><span class="p">)</span>
+            <span class="n">sleepstart</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_event_queue</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">block</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">timeout</span><span class="o">=</span><span class="n">sleepsecs</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;woken by event looptime=</span><span class="si">%s</span><span class="s"> sleeptime=</span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">sleepstart</span> <span class="o">-</span> <span class="n">now</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">sleepstart</span><span class="p">)</span>
+            <span class="k">except</span> <span class="n">Queue</span><span class="o">.</span><span class="n">Empty</span><span class="p">,</span> <span class="n">empty</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;queue timed out. be exhausting, looptime=</span><span class="si">%s</span><span class="s"> sleeptime=</span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">sleepstart</span> <span class="o">-</span> <span class="n">now</span><span class="p">,</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">sleepstart</span><span class="p">)</span>
+                <span class="c"># it&#39;s cool, timed out, do the loop of checks and stuff.</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;MultiWorker exiting&#39;</span><span class="p">)</span>
+
+</div></div>
+<div class="viewcode-block" id="SingleWorker"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.SingleWorker">[docs]</a><span class="k">class</span> <span class="nc">SingleWorker</span><span class="p">(</span><span class="n">Worker</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Worker that runs exactly one job when called.</span>
+
+<span class="sd">    This is used by the :meth:`rejester.run.Manager.do_run_one`</span>
+<span class="sd">    command to run a single job; that just calls :meth:`run`.  This</span>
+<span class="sd">    is also invoked as the child process by :class:`ForkWorker`,</span>
+<span class="sd">    which calls :meth:`as_child`.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">task_master</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">work_spec_names</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">max_jobs</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">SingleWorker</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">task_master</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">work_spec_names</span> <span class="o">=</span> <span class="n">work_spec_names</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">max_jobs</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;worker_job_fetch&#39;</span><span class="p">,</span> <span class="n">max_jobs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="SingleWorker.run"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.SingleWorker.run">[docs]</a>    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">set_title</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Do some work.</span>
+
+<span class="sd">        The standard implementation here calls :meth:`run_one`.</span>
+
+<span class="sd">        :param set_title: if true, set the process&#39;s title with the</span>
+<span class="sd">          work unit name</span>
+<span class="sd">        :return: :const:`True` if there was a job (even if it failed)</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_one</span><span class="p">(</span><span class="n">set_title</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="SingleWorker.run_one"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.SingleWorker.run_one">[docs]</a>    <span class="k">def</span> <span class="nf">run_one</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">set_title</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Get exactly one job, run it, and return.</span>
+
+<span class="sd">        Does nothing (but returns :const:`False`) if there is no work</span>
+<span class="sd">        to do.  Ignores the global mode; this will do work even</span>
+<span class="sd">        if :func:`rejester.TaskMaster.get_mode` returns</span>
+<span class="sd">        :attr:`~rejester.TaskMaster.TERMINATE`.</span>
+
+<span class="sd">        :param set_title: if true, set the process&#39;s title with the</span>
+<span class="sd">          work unit name</span>
+<span class="sd">        :return: :const:`True` if there was a job (even if it failed)</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">available_gb</span> <span class="o">=</span> <span class="n">MultiWorker</span><span class="o">.</span><span class="n">available_gb</span><span class="p">()</span>
+        <span class="n">unit</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">get_work</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">worker_id</span><span class="p">,</span> <span class="n">available_gb</span><span class="p">,</span> <span class="n">work_spec_names</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">work_spec_names</span><span class="p">,</span> <span class="n">max_jobs</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">max_jobs</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">unit</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;No work to do; stopping.&#39;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">False</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">unit</span><span class="p">,</span> <span class="p">(</span><span class="nb">list</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)):</span>
+            <span class="n">ok</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="k">for</span> <span class="n">xunit</span> <span class="ow">in</span> <span class="n">unit</span><span class="p">:</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">ok</span><span class="p">:</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="n">xunit</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+                    <span class="k">except</span> <span class="n">LostLease</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                        <span class="k">pass</span>
+                    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">bad</span><span class="p">:</span>
+                        <span class="c"># we&#39;re already quitting everything, but this is weirdly bad.</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;failed to release lease on </span><span class="si">%r</span><span class="s"> </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">xunit</span><span class="o">.</span><span class="n">work_spec_name</span><span class="p">,</span> <span class="n">xunit</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">ok</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_unit</span><span class="p">(</span><span class="n">xunit</span><span class="p">,</span> <span class="n">set_title</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">ok</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_unit</span><span class="p">(</span><span class="n">unit</span><span class="p">)</span>
+</div>
+    <span class="k">def</span> <span class="nf">_run_unit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">unit</span><span class="p">,</span> <span class="n">set_title</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">set_title</span><span class="p">:</span>
+                <span class="n">setproctitle</span><span class="p">(</span><span class="s">&#39;rejester worker {0!r} {1!r}&#39;</span>
+                             <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">unit</span><span class="o">.</span><span class="n">work_spec_name</span><span class="p">,</span> <span class="n">unit</span><span class="o">.</span><span class="n">key</span><span class="p">))</span>
+            <span class="n">unit</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+            <span class="n">unit</span><span class="o">.</span><span class="n">finish</span><span class="p">()</span>
+        <span class="k">except</span> <span class="n">LostLease</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+            <span class="c"># We don&#39;t own the unit any more so don&#39;t try to report on it</span>
+            <span class="k">pass</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">unit</span><span class="o">.</span><span class="n">fail</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">True</span>
+
+    <span class="c">#: Exit code from :meth:`as_child` if it ran a work unit (maybe</span>
+    <span class="c">#: unsuccessfully).</span>
+    <span class="n">EXIT_SUCCESS</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="c">#: Exit code from :meth:`as_child` if there was a failure getting</span>
+    <span class="c">#: the work unit.</span>
+    <span class="n">EXIT_EXCEPTION</span> <span class="o">=</span> <span class="mi">1</span>
+    <span class="c">#: Exit code from :meth:`as_child` if there was no work to do.</span>
+    <span class="n">EXIT_BORED</span> <span class="o">=</span> <span class="mi">2</span>
+
+    <span class="nd">@classmethod</span>
+<div class="viewcode-block" id="SingleWorker.as_child"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.SingleWorker.as_child">[docs]</a>    <span class="k">def</span> <span class="nf">as_child</span><span class="p">(</span><span class="n">cls</span><span class="p">,</span> <span class="n">global_config</span><span class="p">,</span> <span class="n">parent</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Run a single job in a child process.</span>
+
+<span class="sd">        This method never returns; it always calls :func:`sys.exit`</span>
+<span class="sd">        with an error code that says what it did.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">setproctitle</span><span class="p">(</span><span class="s">&#39;rejester worker&#39;</span><span class="p">)</span>
+            <span class="n">random</span><span class="o">.</span><span class="n">seed</span><span class="p">()</span>  <span class="c"># otherwise everyone inherits the same seed</span>
+            <span class="n">yakonfig</span><span class="o">.</span><span class="n">set_default_config</span><span class="p">([</span><span class="n">yakonfig</span><span class="p">,</span> <span class="n">dblogger</span><span class="p">,</span> <span class="n">rejester</span><span class="p">],</span>
+                                        <span class="n">config</span><span class="o">=</span><span class="n">global_config</span><span class="p">)</span>
+            <span class="n">worker</span> <span class="o">=</span> <span class="n">cls</span><span class="p">(</span><span class="n">yakonfig</span><span class="o">.</span><span class="n">get_global_config</span><span class="p">(</span><span class="n">rejester</span><span class="o">.</span><span class="n">config_name</span><span class="p">))</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">register</span><span class="p">(</span><span class="n">parent</span><span class="o">=</span><span class="n">parent</span><span class="p">)</span>
+            <span class="n">did_work</span> <span class="o">=</span> <span class="n">worker</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">set_title</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="n">worker</span><span class="o">.</span><span class="n">unregister</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">did_work</span><span class="p">:</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">cls</span><span class="o">.</span><span class="n">EXIT_SUCCESS</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">cls</span><span class="o">.</span><span class="n">EXIT_BORED</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+            <span class="c"># There&#39;s some off chance we have logging.</span>
+            <span class="c"># You will be here if redis is down, for instance,</span>
+            <span class="c"># and the yakonfig dblogger setup runs but then</span>
+            <span class="c"># the get_work call fails with an exception.</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">root</span><span class="o">.</span><span class="n">handlers</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;failed to do any work&#39;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="n">e</span><span class="p">)</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">cls</span><span class="o">.</span><span class="n">EXIT_EXCEPTION</span><span class="p">)</span>
+
+</div></div>
+<span class="k">class</span> <span class="nc">LoopWorker</span><span class="p">(</span><span class="n">SingleWorker</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Worker that runs jobs for a fixed length of time.</span>
+
+<span class="sd">    This does jobs as :meth:`SingleWorker.run_one`.  However,</span>
+<span class="sd">    the worker itself is configured with a maximum lifetime, and</span>
+<span class="sd">    if a job finishes before the lifetime has passed, this worker</span>
+<span class="sd">    will try to do another job.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">set_title</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Do some work.</span>
+
+<span class="sd">        The standard implementation here calls :meth:`run_loop`.</span>
+
+<span class="sd">        :param set_title: if true, set the process&#39;s title with the</span>
+<span class="sd">          work unit name</span>
+<span class="sd">        :return: :const:`True` if there was a job (even if it failed)</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_loop</span><span class="p">(</span><span class="n">set_title</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">run_loop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">set_title</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+        <span class="c"># Find our deadline from the global configuration.</span>
+        <span class="c"># We don&#39;t really love this, but it&#39;s data we&#39;re already</span>
+        <span class="c"># passing across process boundaries.</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">duration</span> <span class="o">=</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">get_global_config</span><span class="p">(</span><span class="s">&#39;rejester&#39;</span><span class="p">,</span> <span class="s">&#39;fork_worker&#39;</span><span class="p">,</span>
+                                                  <span class="s">&#39;child_lifetime&#39;</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="n">duration</span> <span class="o">=</span> <span class="mi">10</span>
+        <span class="n">deadline</span> <span class="o">=</span> <span class="n">now</span> <span class="o">+</span> <span class="n">duration</span>
+
+        <span class="k">while</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">deadline</span><span class="p">:</span>
+            <span class="n">ret</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">run_one</span><span class="p">(</span><span class="n">set_title</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">ret</span><span class="p">:</span>
+                <span class="k">break</span>
+
+        <span class="k">return</span> <span class="n">ret</span>
+
+
+<div class="viewcode-block" id="ForkWorker"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker">[docs]</a><span class="k">class</span> <span class="nc">ForkWorker</span><span class="p">(</span><span class="n">Worker</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Parent worker that runs multiple jobs concurrently.</span>
+
+<span class="sd">    This manages a series of child processes, each of which runs</span>
+<span class="sd">    a :class:`SingleWorker`.  It runs as long as the global rejester</span>
+<span class="sd">    state is not :class:`rejester.TaskMaster.TERMINATE`.</span>
+
+<span class="sd">    This takes some additional optional configuration options.  A</span>
+<span class="sd">    typical configuration will look like:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        rejester:</span>
+<span class="sd">          # required rejester configuration</span>
+<span class="sd">          registry_addresses: [ &#39;redis.example.com:6379&#39; ]</span>
+<span class="sd">          app_name: rejester</span>
+<span class="sd">          namespace: namespace</span>
+
+<span class="sd">          # indicate which worker to use</span>
+<span class="sd">          worker: fork_worker</span>
+<span class="sd">          fork_worker:</span>
+<span class="sd">            # set this or num_workers; num_workers takes precedence</span>
+<span class="sd">            num_workers_per_core: 1</span>
+<span class="sd">            # how often to check if there is more work</span>
+<span class="sd">            poll_interval: 1</span>
+<span class="sd">            # how often to start more workers</span>
+<span class="sd">            spawn_interval: 0.01</span>
+<span class="sd">            # how often to record our existence</span>
+<span class="sd">            heartbeat_interval: 15</span>
+<span class="sd">            # minimum time a working worker will live</span>
+<span class="sd">            child_lifetime: 10</span>
+<span class="sd">            # kill off jobs this long before their deadlines</span>
+<span class="sd">            stop_jobs_early: 15</span>
+
+<span class="sd">    This spawns child processes to do work.  Each child process does at</span>
+<span class="sd">    most one work unit.  If `num_workers` is set, at most this many</span>
+<span class="sd">    concurrent workers will be running at a time.  If `num_workers` is</span>
+<span class="sd">    not set but `num_workers_per_core` is, the maximum number of workers</span>
+<span class="sd">    is a multiple of the number of processor cores available.  The</span>
+<span class="sd">    default setting is 1 worker per core, but setting this higher can</span>
+<span class="sd">    be beneficial if jobs are alternately network- and CPU-bound.</span>
+
+<span class="sd">    The parent worker runs a fairly simple state machine.  It awakens</span>
+<span class="sd">    on startup, whenever a child process exits, or after a timeout.</span>
+<span class="sd">    When it awakens, it checks on the status of all of its children,</span>
+<span class="sd">    and collects the exit status of those that have finished.  If any</span>
+<span class="sd">    failed or reported no more work, the timeout is set to</span>
+<span class="sd">    `poll_interval`, and no more workers are started until that</span>
+<span class="sd">    timeout has passed.  Otherwise, if it is not running the maximum</span>
+<span class="sd">    number of workers, it starts one exactly and sets the timeout to</span>
+<span class="sd">    `spawn_interval`.</span>
+
+<span class="sd">    This means that if the system is operating normally, and there is</span>
+<span class="sd">    work to do, then it will start all of its workers in `num_workers`</span>
+<span class="sd">    times `spawn_interval` time.  If `spawn_interval` is 0, then any</span>
+<span class="sd">    time the system thinks it may have work to do, it will spawn the</span>
+<span class="sd">    maximum number of processes immediately, each of which will</span>
+<span class="sd">    connect to Redis.  If the system runs out of work, or if it starts</span>
+<span class="sd">    all of its workers, it will check for work or system shutdown</span>
+<span class="sd">    every `poll_interval`.  The parent worker will contact Redis,</span>
+<span class="sd">    recording its state and retrieving the global mode, every</span>
+<span class="sd">    `heartbeat_interval`.</span>
+
+<span class="sd">    Every `heartbeat_interval` the parent also checks on the jobs its</span>
+<span class="sd">    children are running.  If any of them are overdue now or being</span>
+<span class="sd">    worked on by other workers, the parent will kill them to avoid</span>
+<span class="sd">    having multiple workers doing the same work unit.  Furthermore, if</span>
+<span class="sd">    any childrens&#39; jobs will expire within `stop_jobs_early` seconds,</span>
+<span class="sd">    those jobs will be killed too even if they aren&#39;t expired yet, and</span>
+<span class="sd">    any jobs killed this way will be marked failed if they are still</span>
+<span class="sd">    owned by the same child worker.  If `stop_jobs_early` is at least</span>
+<span class="sd">    `heartbeat_interval`, this will reliably cause jobs that take</span>
+<span class="sd">    longer than the expiry interval (default 300 seconds) to be killed</span>
+<span class="sd">    off rather than retried.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+
+    <span class="sd">&#39;&#39;&#39;Several implementation notes:</span>
+
+<span class="sd">    fork() and logging don&#39;t mix.  While we&#39;re better off here than</span>
+<span class="sd">    using :mod:`multiprocessing` (which forks from a thread, so the</span>
+<span class="sd">    child can start up with a log handler locked) there are still</span>
+<span class="sd">    several cases like syslog or dblogger handlers that depend on a</span>
+<span class="sd">    network connection that won&#39;t be there in the child.</span>
+
+<span class="sd">    That means that *nothing in the parent gets to log at all*.  We</span>
+<span class="sd">    need to maintain a separate child process to do logging.</span>
+
+<span class="sd">    ``debug_worker`` is a hidden additional configuration option.  It</span>
+<span class="sd">    can cause a lot of boring information to get written to the log.</span>
+<span class="sd">    It is a list of keywords.  ``children`` logs all process creation</span>
+<span class="sd">    and destruction.  ``loop`` shows what we&#39;re thinking in the main</span>
+<span class="sd">    loop.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;fork_worker&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;num_workers&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+        <span class="s">&#39;num_workers_per_core&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="s">&#39;poll_interval&#39;</span><span class="p">:</span> <span class="mi">1</span><span class="p">,</span>
+        <span class="s">&#39;spawn_interval&#39;</span><span class="p">:</span> <span class="mf">0.01</span><span class="p">,</span>
+        <span class="s">&#39;heartbeat_interval&#39;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span>
+        <span class="s">&#39;child_lifetime&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="s">&#39;stop_jobs_early&#39;</span><span class="p">:</span> <span class="mi">15</span><span class="p">,</span>
+        <span class="s">&#39;debug_worker&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">config_get</span><span class="p">(</span><span class="n">cls</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">cls</span><span class="o">.</span><span class="n">default_config</span><span class="p">[</span><span class="n">key</span><span class="p">])</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a new forking worker.</span>
+
+<span class="sd">        This starts up with no children and no logger, and it will</span>
+<span class="sd">        set itself up and contact Redis as soon as :meth:`run` is called.</span>
+
+<span class="sd">        :param dict config: ``rejester`` config dictionary</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ForkWorker</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config_name</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">num_workers</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config_get</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s">&#39;num_workers&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_workers</span><span class="p">:</span>
+            <span class="n">num_cores</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="c"># This replicates the Good Unix case of multiprocessing.cpu_count()</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">num_cores</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">sysconf</span><span class="p">(</span><span class="s">&#39;SC_NPROCESSORS_ONLN&#39;</span><span class="p">)</span>
+            <span class="k">except</span> <span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="ne">OSError</span><span class="p">,</span> <span class="ne">AttributeError</span><span class="p">):</span>
+                <span class="k">pass</span>
+            <span class="n">num_cores</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">num_cores</span><span class="p">)</span>
+            <span class="n">num_workers_per_core</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config_get</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s">&#39;num_workers_per_core&#39;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">num_workers</span> <span class="o">=</span> <span class="n">num_workers_per_core</span> <span class="o">*</span> <span class="n">num_cores</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">poll_interval</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config_get</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s">&#39;poll_interval&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">spawn_interval</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config_get</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s">&#39;spawn_interval&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">heartbeat_interval</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config_get</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s">&#39;heartbeat_interval&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">heartbeat_deadline</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="mi">1</span>  <span class="c"># due now</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">child_lifetime</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config_get</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s">&#39;child_lifetime&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stop_jobs_early</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config_get</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="s">&#39;stop_jobs_early&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">debug_worker</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;debug_worker&#39;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">children</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">log_child</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">shutting_down</span> <span class="o">=</span> <span class="bp">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">last_mode</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigabrt</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigint</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigpipe</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigterm</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">pid_is_alive</span><span class="p">(</span><span class="n">pid</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">kill</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="c"># This doesn&#39;t actually send a signal, but does still do the</span>
+            <span class="c"># &quot;is pid alive?&quot; check.  If we didn&#39;t get an exception, it is.</span>
+            <span class="k">return</span> <span class="bp">True</span>
+        <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ESRCH</span><span class="p">:</span>
+                <span class="c"># &quot;No such process&quot;</span>
+                <span class="k">return</span> <span class="bp">False</span>
+            <span class="k">raise</span>
+
+<div class="viewcode-block" id="ForkWorker.set_signal_handlers"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.set_signal_handlers">[docs]</a>    <span class="k">def</span> <span class="nf">set_signal_handlers</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Set some signal handlers.</span>
+
+<span class="sd">        These react reasonably to shutdown requests, and keep the</span>
+<span class="sd">        logging child alive.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">def</span> <span class="nf">handler</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+            <span class="k">def</span> <span class="nf">wrapper</span><span class="p">(</span><span class="n">signum</span><span class="p">,</span> <span class="n">backtrace</span><span class="p">):</span>
+                <span class="k">return</span> <span class="n">f</span><span class="p">()</span>
+            <span class="k">return</span> <span class="n">wrapper</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigabrt</span> <span class="o">=</span> <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGABRT</span><span class="p">,</span>
+                                         <span class="n">handler</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scram</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigint</span> <span class="o">=</span> <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGINT</span><span class="p">,</span>
+                                        <span class="n">handler</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">stop_gracefully</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigpipe</span> <span class="o">=</span> <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGPIPE</span><span class="p">,</span>
+                                         <span class="n">handler</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">live_log_child</span><span class="p">))</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">siginterrupt</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGPIPE</span><span class="p">,</span> <span class="bp">False</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_sigterm</span> <span class="o">=</span> <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">,</span>
+                                         <span class="n">handler</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">stop_gracefully</span><span class="p">))</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.clear_signal_handlers"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.clear_signal_handlers">[docs]</a>    <span class="k">def</span> <span class="nf">clear_signal_handlers</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Undo :meth:`set_signal_handlers`.</span>
+
+<span class="sd">        Not only must this be done on shutdown, but after every fork</span>
+<span class="sd">        call too.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGABRT</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">old_sigabrt</span><span class="p">)</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGINT</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">old_sigint</span><span class="p">)</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGPIPE</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">old_sigpipe</span><span class="p">)</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">old_sigterm</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.log"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.log">[docs]</a>    <span class="k">def</span> <span class="nf">log</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">level</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Write a log message via the child process.</span>
+
+<span class="sd">        The child process must already exist; call :meth:`live_log_child`</span>
+<span class="sd">        to make sure.  If it has died in a way we don&#39;t expect then</span>
+<span class="sd">        this will raise :const:`signal.SIGPIPE`.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">prefix</span> <span class="o">=</span> <span class="n">struct</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="s">&#39;ii&#39;</span><span class="p">,</span> <span class="n">level</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">message</span><span class="p">))</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span><span class="p">,</span> <span class="n">prefix</span><span class="p">)</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.debug"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.debug">[docs]</a>    <span class="k">def</span> <span class="nf">debug</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">group</span><span class="p">,</span> <span class="n">message</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Maybe write a debug-level log message.</span>
+
+<span class="sd">        In particular, this gets written if the hidden `debug_worker`</span>
+<span class="sd">        option contains `group`.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">group</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">debug_worker</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s">&#39;stdout&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">debug_worker</span><span class="p">:</span>
+                <span class="k">print</span> <span class="n">message</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">DEBUG</span><span class="p">,</span> <span class="n">message</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.log_spewer"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.log_spewer">[docs]</a>    <span class="k">def</span> <span class="nf">log_spewer</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">gconfig</span><span class="p">,</span> <span class="n">fd</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Child process to manage logging.</span>
+
+<span class="sd">        This reads pairs of lines from `fd`, which are alternating</span>
+<span class="sd">        priority (Python integer) and message (unformatted string).</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">setproctitle</span><span class="p">(</span><span class="s">&#39;rejester fork_worker log task&#39;</span><span class="p">)</span>
+        <span class="n">yakonfig</span><span class="o">.</span><span class="n">set_default_config</span><span class="p">([</span><span class="n">yakonfig</span><span class="p">,</span> <span class="n">dblogger</span><span class="p">],</span> <span class="n">config</span><span class="o">=</span><span class="n">gconfig</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+                <span class="n">prefix</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">struct</span><span class="o">.</span><span class="n">calcsize</span><span class="p">(</span><span class="s">&#39;ii&#39;</span><span class="p">))</span>
+                <span class="n">level</span><span class="p">,</span> <span class="n">msglen</span> <span class="o">=</span> <span class="n">struct</span><span class="o">.</span><span class="n">unpack</span><span class="p">(</span><span class="s">&#39;ii&#39;</span><span class="p">,</span> <span class="n">prefix</span><span class="p">)</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">fd</span><span class="p">,</span> <span class="n">msglen</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">level</span><span class="p">,</span> <span class="n">msg</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;log writer failed&#39;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="n">e</span><span class="p">)</span>
+            <span class="k">raise</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.start_log_child"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.start_log_child">[docs]</a>    <span class="k">def</span> <span class="nf">start_log_child</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Start the logging child process.&#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stop_log_child</span><span class="p">()</span>
+        <span class="n">gconfig</span> <span class="o">=</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">get_global_config</span><span class="p">()</span>
+        <span class="n">read_end</span><span class="p">,</span> <span class="n">write_end</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">pipe</span><span class="p">()</span>
+        <span class="n">pid</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">fork</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c"># We are the child</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">clear_signal_handlers</span><span class="p">()</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">write_end</span><span class="p">)</span>
+            <span class="n">yakonfig</span><span class="o">.</span><span class="n">clear_global_config</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log_spewer</span><span class="p">(</span><span class="n">gconfig</span><span class="p">,</span> <span class="n">read_end</span><span class="p">)</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c"># We are the parent</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;children&#39;</span><span class="p">,</span> <span class="s">&#39;new log child with pid {0}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log_child</span> <span class="o">=</span> <span class="n">pid</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="n">read_end</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span> <span class="o">=</span> <span class="n">write_end</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.stop_log_child"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.stop_log_child">[docs]</a>    <span class="k">def</span> <span class="nf">stop_log_child</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Stop the logging child process.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span><span class="p">:</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_child</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;children&#39;</span><span class="p">,</span> <span class="s">&#39;stopping log child with pid {0}&#39;</span>
+                           <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_child</span><span class="p">))</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">kill</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_child</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">)</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">waitpid</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_child</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ESRCH</span> <span class="ow">or</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ECHILD</span><span class="p">:</span>
+                    <span class="c"># already gone</span>
+                    <span class="k">pass</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log_child</span> <span class="o">=</span> <span class="bp">None</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.live_log_child"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.live_log_child">[docs]</a>    <span class="k">def</span> <span class="nf">live_log_child</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Start the logging child process if it died.&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_child</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">pid_is_alive</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_child</span><span class="p">)):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">start_log_child</span><span class="p">()</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.do_some_work"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.do_some_work">[docs]</a>    <span class="k">def</span> <span class="nf">do_some_work</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">can_start_more</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Run one cycle of the main loop.</span>
+
+<span class="sd">        If the log child has died, restart it.  If any of the worker</span>
+<span class="sd">        children have died, collect their status codes and remove them</span>
+<span class="sd">        from the child set.  If there is a worker slot available, start</span>
+<span class="sd">        exactly one child.</span>
+
+<span class="sd">        :param bool can_start_more: Allowed to start a child?</span>
+<span class="sd">        :return:  Time to wait before calling this function again</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">any_happy_children</span> <span class="o">=</span> <span class="bp">False</span>
+        <span class="n">any_sad_children</span> <span class="o">=</span> <span class="bp">False</span>
+        <span class="n">any_bored_children</span> <span class="o">=</span> <span class="bp">False</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;loop&#39;</span><span class="p">,</span> <span class="s">&#39;starting work loop, can_start_more={0!r}&#39;</span>
+                   <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">can_start_more</span><span class="p">))</span>
+
+        <span class="c"># See if anyone has died</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">pid</span><span class="p">,</span> <span class="n">status</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">waitpid</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">WNOHANG</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ECHILD</span><span class="p">:</span>
+                    <span class="c"># No children at all</span>
+                    <span class="n">pid</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span>
+            <span class="k">if</span> <span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="k">elif</span> <span class="n">pid</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_child</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;children&#39;</span><span class="p">,</span>
+                           <span class="s">&#39;log child with pid {0} exited&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">))</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">start_log_child</span><span class="p">()</span>
+            <span class="k">elif</span> <span class="n">pid</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">pid</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">WIFEXITED</span><span class="p">(</span><span class="n">status</span><span class="p">):</span>
+                    <span class="n">code</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">WEXITSTATUS</span><span class="p">(</span><span class="n">status</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;children&#39;</span><span class="p">,</span>
+                               <span class="s">&#39;worker {0} exited with code {1}&#39;</span>
+                               <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">code</span><span class="p">))</span>
+                    <span class="k">if</span> <span class="n">code</span> <span class="o">==</span> <span class="n">SingleWorker</span><span class="o">.</span><span class="n">EXIT_SUCCESS</span><span class="p">:</span>
+                        <span class="n">any_happy_children</span> <span class="o">=</span> <span class="bp">True</span>
+                    <span class="k">elif</span> <span class="n">code</span> <span class="o">==</span> <span class="n">SingleWorker</span><span class="o">.</span><span class="n">EXIT_EXCEPTION</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+                                 <span class="s">&#39;child {0} reported failure&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">))</span>
+                        <span class="n">any_sad_children</span> <span class="o">=</span> <span class="bp">True</span>
+                    <span class="k">elif</span> <span class="n">code</span> <span class="o">==</span> <span class="n">SingleWorker</span><span class="o">.</span><span class="n">EXIT_BORED</span><span class="p">:</span>
+                        <span class="n">any_bored_children</span> <span class="o">=</span> <span class="bp">True</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+                                 <span class="s">&#39;child {0} had odd exit code {1}&#39;</span>
+                                 <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">code</span><span class="p">))</span>
+                <span class="k">elif</span> <span class="n">os</span><span class="o">.</span><span class="n">WIFSIGNALED</span><span class="p">(</span><span class="n">status</span><span class="p">):</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+                             <span class="s">&#39;child {0} exited with signal {1}&#39;</span>
+                             <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">WTERMSIG</span><span class="p">(</span><span class="n">status</span><span class="p">)))</span>
+                    <span class="n">any_sad_children</span> <span class="o">=</span> <span class="bp">True</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+                             <span class="s">&#39;child {0} went away with unknown status {1}&#39;</span>
+                             <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">status</span><span class="p">))</span>
+                    <span class="n">any_sad_children</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">WARNING</span><span class="p">,</span>
+                         <span class="s">&#39;child {0} exited, but we don</span><span class="se">\&#39;</span><span class="s">t recognize it&#39;</span>
+                         <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">))</span>
+
+        <span class="c"># ...what next?</span>
+        <span class="c"># (Don&#39;t log anything here; either we logged a WARNING message</span>
+        <span class="c"># above when things went badly, or we&#39;re in a very normal flow</span>
+        <span class="c"># and don&#39;t want to spam the log)</span>
+        <span class="k">if</span> <span class="n">any_sad_children</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;loop&#39;</span><span class="p">,</span> <span class="s">&#39;exit work loop with sad child&#39;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">poll_interval</span>
+
+        <span class="k">if</span> <span class="n">any_bored_children</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;loop&#39;</span><span class="p">,</span> <span class="s">&#39;exit work loop with no work&#39;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">poll_interval</span>
+
+        <span class="c"># This means we get to start a child, maybe.</span>
+        <span class="k">if</span> <span class="n">can_start_more</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">)</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">num_workers</span><span class="p">:</span>
+            <span class="n">pid</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">fork</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">pid</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="c"># We are the child</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">clear_signal_handlers</span><span class="p">()</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span><span class="p">:</span>
+                    <span class="n">os</span><span class="o">.</span><span class="n">close</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">log_fd</span><span class="p">)</span>
+                <span class="n">LoopWorker</span><span class="o">.</span><span class="n">as_child</span><span class="p">(</span><span class="n">yakonfig</span><span class="o">.</span><span class="n">get_global_config</span><span class="p">(),</span>
+                                    <span class="n">parent</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">worker_id</span><span class="p">)</span>
+                <span class="c"># This should never return, but just in case</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">SingleWorker</span><span class="o">.</span><span class="n">EXIT_EXCEPTION</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c"># We are the parent</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;children&#39;</span><span class="p">,</span> <span class="s">&#39;new worker with pid {0}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pid</span><span class="p">))</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">pid</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;loop&#39;</span><span class="p">,</span> <span class="s">&#39;exit work loop with a new worker&#39;</span><span class="p">)</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">spawn_interval</span>
+
+        <span class="c"># Absolutely nothing is happening; which means we have all</span>
+        <span class="c"># of our potential workers and they&#39;re doing work</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;loop&#39;</span><span class="p">,</span> <span class="s">&#39;exit work loop with full system&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">poll_interval</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.check_spinning_children"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.check_spinning_children">[docs]</a>    <span class="k">def</span> <span class="nf">check_spinning_children</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Stop children that are working on overdue jobs.&#39;&#39;&#39;</span>
+        <span class="n">child_jobs</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">get_child_work_units</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">worker_id</span><span class="p">)</span>
+        <span class="c"># We will kill off any jobs that are due before &quot;now&quot;.  This</span>
+        <span class="c"># isn&#39;t really now now, but now plus a grace period to make</span>
+        <span class="c"># sure spinning jobs don&#39;t get retried.</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_jobs_early</span>
+        <span class="k">for</span> <span class="n">child</span><span class="p">,</span> <span class="n">wul</span> <span class="ow">in</span> <span class="n">child_jobs</span><span class="o">.</span><span class="n">iteritems</span><span class="p">():</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">wul</span><span class="p">,</span> <span class="p">(</span><span class="nb">list</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)):</span>
+                <span class="c"># Support old style get_child_work_units which returns</span>
+                <span class="c"># single WorkUnit objects instead of list of them.</span>
+                <span class="n">wul</span> <span class="o">=</span> <span class="p">[</span><span class="n">wul</span><span class="p">]</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">wul</span><span class="p">:</span>
+                <span class="c"># This worker is idle, but oddly, still present; it should</span>
+                <span class="c"># clean up after itself</span>
+                <span class="k">continue</span>
+            <span class="c"># filter on those actually assigned to the child worker</span>
+            <span class="n">wul</span> <span class="o">=</span> <span class="nb">filter</span><span class="p">(</span><span class="k">lambda</span> <span class="n">wu</span><span class="p">:</span> <span class="n">wu</span><span class="o">.</span><span class="n">worker_id</span> <span class="o">==</span> <span class="n">child</span><span class="p">,</span> <span class="n">wul</span><span class="p">)</span>
+            <span class="c"># check for any still active not-overdue job</span>
+            <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="nb">filter</span><span class="p">(</span><span class="k">lambda</span> <span class="n">wu</span><span class="p">:</span> <span class="n">wu</span><span class="o">.</span><span class="n">expires</span> <span class="o">&gt;</span> <span class="n">now</span><span class="p">,</span> <span class="n">wul</span><span class="p">)):</span>
+                <span class="k">continue</span>
+            <span class="c"># So either someone else is doing its work or it&#39;s just overdue</span>
+            <span class="n">environment</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">get_heartbeat</span><span class="p">(</span><span class="n">child</span><span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">environment</span><span class="p">:</span>
+                <span class="k">continue</span>  <span class="c"># derp</span>
+            <span class="k">if</span> <span class="s">&#39;pid&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">environment</span><span class="p">:</span>
+                <span class="k">continue</span>  <span class="c"># derp</span>
+            <span class="k">if</span> <span class="n">environment</span><span class="p">[</span><span class="s">&#39;pid&#39;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+                <span class="k">continue</span>  <span class="c"># derp</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">kill</span><span class="p">(</span><span class="n">environment</span><span class="p">[</span><span class="s">&#39;pid&#39;</span><span class="p">],</span> <span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">)</span>
+            <span class="c"># This will cause the child to die, and do_some_work will</span>
+            <span class="c"># reap it; but we&#39;d also like the job to fail if possible</span>
+            <span class="k">for</span> <span class="n">wu</span> <span class="ow">in</span> <span class="n">wul</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">wu</span><span class="o">.</span><span class="n">data</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;how did wu.data become: </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">wu</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">wu</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;traceback&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="s">&#39;job expired&#39;</span>
+                <span class="n">wu</span><span class="o">.</span><span class="n">fail</span><span class="p">(</span><span class="n">exc</span><span class="o">=</span><span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;job expired&#39;</span><span class="p">))</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.stop_gracefully"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.stop_gracefully">[docs]</a>    <span class="k">def</span> <span class="nf">stop_gracefully</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Refuse to start more processes.</span>
+
+<span class="sd">        This runs in response to SIGINT or SIGTERM; if this isn&#39;t a</span>
+<span class="sd">        background process, control-C and a normal ``kill`` command</span>
+<span class="sd">        cause this.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">shutting_down</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span>
+                     <span class="s">&#39;second shutdown request, shutting down now&#39;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">scram</span><span class="p">()</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span> <span class="s">&#39;shutting down after current jobs finish&#39;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">shutting_down</span> <span class="o">=</span> <span class="bp">True</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.stop_all_children"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.stop_all_children">[docs]</a>    <span class="k">def</span> <span class="nf">stop_all_children</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Kill all workers.&#39;&#39;&#39;</span>
+        <span class="c"># There&#39;s an unfortunate race condition if we try to log this</span>
+        <span class="c"># case: we can&#39;t depend on the logging child actually receiving</span>
+        <span class="c"># the log message before we kill it off.  C&#39;est la vie...</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stop_log_child</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">pid</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">kill</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">)</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">waitpid</span><span class="p">(</span><span class="n">pid</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">e</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ESRCH</span> <span class="ow">or</span> <span class="n">e</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="n">errno</span><span class="o">.</span><span class="n">ECHILD</span><span class="p">:</span>
+                    <span class="c"># No such process</span>
+                    <span class="k">pass</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.scram"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.scram">[docs]</a>    <span class="k">def</span> <span class="nf">scram</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Kill all workers and die ourselves.</span>
+
+<span class="sd">        This runs in response to SIGABRT, from a specific invocation</span>
+<span class="sd">        of the ``kill`` command.  It also runs if</span>
+<span class="sd">        :meth:`stop_gracefully` is called more than once.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">stop_all_children</span><span class="p">()</span>
+        <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGTERM</span><span class="p">,</span> <span class="n">signal</span><span class="o">.</span><span class="n">SIG_DFL</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="ForkWorker.run"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.workers.ForkWorker.run">[docs]</a>    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Run the main loop.</span>
+
+<span class="sd">        This is fairly invasive: it sets a bunch of signal handlers</span>
+<span class="sd">        and spawns off a bunch of child processes.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">setproctitle</span><span class="p">(</span><span class="s">&#39;rejester fork_worker for namespace {0}&#39;</span>
+                     <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;namespace&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">set_signal_handlers</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">start_log_child</span><span class="p">()</span>
+            <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+                <span class="n">can_start_more</span> <span class="o">=</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">shutting_down</span>
+                <span class="k">if</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">heartbeat_deadline</span><span class="p">:</span>
+                    <span class="n">mode</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">heartbeat</span><span class="p">()</span>
+                    <span class="k">if</span> <span class="n">mode</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">last_mode</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span>
+                                 <span class="s">&#39;rejester global mode is {0!r}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">mode</span><span class="p">))</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">last_mode</span> <span class="o">=</span> <span class="n">mode</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">heartbeat_deadline</span> <span class="o">=</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">+</span>
+                                               <span class="bp">self</span><span class="o">.</span><span class="n">heartbeat_interval</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">check_spinning_children</span><span class="p">()</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">mode</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">last_mode</span>
+                <span class="k">if</span> <span class="n">mode</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">RUN</span><span class="p">:</span>
+                    <span class="n">can_start_more</span> <span class="o">=</span> <span class="bp">False</span>
+                <span class="n">interval</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">do_some_work</span><span class="p">(</span><span class="n">can_start_more</span><span class="p">)</span>
+                <span class="c"># Normal shutdown case</span>
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">children</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">task_master</span><span class="o">.</span><span class="n">TERMINATE</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span>
+                                 <span class="s">&#39;stopping for rejester global shutdown&#39;</span><span class="p">)</span>
+                        <span class="k">break</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">shutting_down</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">INFO</span><span class="p">,</span>
+                                 <span class="s">&#39;stopping in response to signal&#39;</span><span class="p">)</span>
+                        <span class="k">break</span>
+                <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">interval</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">log</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">CRITICAL</span><span class="p">,</span>
+                     <span class="s">&#39;uncaught exception in worker: &#39;</span> <span class="o">+</span> <span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">())</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="c"># See the note in run_workers() above.  clear_signal_handlers()</span>
+            <span class="c"># calls signal.signal() which explicitly affects the current</span>
+            <span class="c"># process, parent or child.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">clear_signal_handlers</span><span class="p">()</span></div></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

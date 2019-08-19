@@ -1,0 +1,263 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>1. Overview of StreamCorpus software components &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../index.html" />
+    <link rel="next" title="2. streamcorpus — single-document data representation" href="streamcorpus.html" />
+    <link rel="prev" title="Welcome to StreamCorpus" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="streamcorpus.html" title="2. streamcorpus — single-document data representation"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="../index.html" title="Welcome to StreamCorpus"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="overview-of-streamcorpus-software-components">
+<h1>1. Overview of StreamCorpus software components<a class="headerlink" href="#overview-of-streamcorpus-software-components" title="Permalink to this headline">¶</a></h1>
+<p>StreamCorpus provides a toolkit for processing massive streams of text
+and running natural language extractors on the text.  StreamCorpus
+does not provide any extractors itself; it operates third-party
+extractors, such as Serif and Factorie, and unifies their output.
+StreamCorpus pipline can store documents in S3, Accumulo, or flat
+files.</p>
+<p>StreamCorpus is used extensively in <a class="reference external" href="http://trec-kba.org/">TREC KBA</a>,
+<a class="reference external" href="http://trec-ts.org/">TREC Temporal Summarization</a>,
+<a class="reference external" href="http://trec-dd.org/">TREC Dynamic Domain</a>,
+and at <a class="reference external" href="http://diffeo.com/">Diffeo</a>.</p>
+<p>Ask more at <a class="reference external" href="http://groups.google.com/group/streamcorpus">StreamCorpus Google Group</a></p>
+<p>All of these python package are hosted in <a class="reference external" href="http://github.com/trec-kba/">github.com/trec-kba</a>
+and <a class="reference external" href="http://github.com/diffeo/">github.com/diffeo</a></p>
+<div class="section" id="invocation">
+<h2>1.1. Invocation<a class="headerlink" href="#invocation" title="Permalink to this headline">¶</a></h2>
+<p>The general data flow is as follows:</p>
+<ol class="arabic simple">
+<li>Convert your input format into <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamItem</span></code></a>
+format.  This generally needs to be done by custom code
+implementing the <a class="reference internal" href="streamcorpus_pipeline.html#module-streamcorpus_pipeline" title="streamcorpus_pipeline"><code class="xref py py-mod docutils literal"><span class="pre">streamcorpus_pipeline</span></code></a> reader stage
+interface.</li>
+<li>Run <strong class="program">streamcorpus_pipeline</strong> over the original inputs to
+produce <a class="reference internal" href="streamcorpus.html#streamcorpus.Chunk" title="streamcorpus.Chunk"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.Chunk</span></code></a> files, either stored locally or
+in <a class="reference internal" href="kvlayer.html#module-kvlayer" title="kvlayer"><code class="xref py py-mod docutils literal"><span class="pre">kvlayer</span></code></a> backed storage.</li>
+</ol>
+<p>All of the programs share a common configuration interface.  You can
+pass <a class="reference internal" href="yakonfig.html#cmdoption-yakonfig--dump-config"><code class="xref std std-option docutils literal"><span class="pre">--dump-config</span></code></a> to any of the
+programs to see the default configuration, and <a class="reference internal" href="yakonfig.html#cmdoption-yakonfig--config"><code class="xref std std-option docutils literal"><span class="pre">--config</span></code></a> to any of them to provide your own configuration
+file.</p>
+</div>
+<div class="section" id="example">
+<h2>1.2. Example<a class="headerlink" href="#example" title="Permalink to this headline">¶</a></h2>
+<p>One convenient path to load data is to use the
+<a class="reference internal" href="streamcorpus_pipeline.html#streamcorpus_pipeline._yaml_files_list.yaml_files_list" title="streamcorpus_pipeline._yaml_files_list.yaml_files_list"><code class="xref py py-class docutils literal"><span class="pre">yaml_files_list</span></code></a>
+reader to load in plain-text data files matching known entities.  We
+will load the data into Apache Accumulo as a backing database.  Create
+a shared configuration file, <code class="file docutils literal"><span class="pre">common.yaml</span></code>, that includes the
+basic shared setup, as well as some basic logging configuration and
+support for the <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> distributed computing environment:</p>
+<div class="highlight-yaml"><div class="highlight"><pre> <span class="l-Scalar-Plain">logging</span><span class="p-Indicator">:</span>
+   <span class="l-Scalar-Plain">root</span><span class="p-Indicator">:</span>
+     <span class="l-Scalar-Plain">level</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">INFO</span>
+ <span class="l-Scalar-Plain">kvlayer</span><span class="p-Indicator">:</span>
+   <span class="l-Scalar-Plain">app_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">datasets</span>
+   <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">mydataset</span>
+   <span class="l-Scalar-Plain">storage_type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">accumulo</span>
+   <span class="l-Scalar-Plain">storage_addresses</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="s">&quot;accumulo-proxy.example.com:50096&quot;</span> <span class="p-Indicator">]</span>
+   <span class="l-Scalar-Plain">username</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">root</span>
+   <span class="l-Scalar-Plain">password</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">secret</span>
+<span class="l-Scalar-Plain">rejester</span><span class="p-Indicator">:</span> <span class="c1"># necessary but unused in this example</span>
+  <span class="l-Scalar-Plain">app_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">datasets</span>
+  <span class="l-Scalar-Plain">namespace</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">mydataset</span>
+  <span class="l-Scalar-Plain">registry_addresses</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="s">&quot;redis.example.com:6379&quot;</span> <span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>The reader needs a specific YAML file to tell it where to find input
+documents and how to label them.  This file, <code class="file docutils literal"><span class="pre">labels.yaml</span></code>,
+looks like:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">root_path</span><span class="p-Indicator">:</span>                <span class="c1"># &quot;empty&quot; means working directory</span>
+<span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">source</span>            <span class="c1"># embedded in StreamItem.source</span>
+<span class="l-Scalar-Plain">annotator_id</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">annotator</span>   <span class="c1"># embedded in labels</span>
+<span class="l-Scalar-Plain">entities</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">target_id</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">https://kb.diffeo.com/entity</span>
+    <span class="l-Scalar-Plain">doc_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">data</span>
+    <span class="l-Scalar-Plain">slots</span><span class="p-Indicator">:</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">canonical_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Entity</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">entity</span>
+</pre></div>
+</div>
+<p>This will cause the reader to read the documents under the
+<code class="file docutils literal"><span class="pre">data</span></code> path, create a stream item for each marked as coming from
+<code class="docutils literal"><span class="pre">source</span></code>, and search each for appearances of the term &#8220;entity&#8221;.
+Mentions of that term will be labelled as corresponding to the
+<code class="docutils literal"><span class="pre">https://kb.diffeo.com/entity</span></code> entity, according to the annotator
+&#8220;annotator&#8221;.</p>
+<p>A <strong class="program">streamcorpus_pipeline</strong> configuration that reads this using
+the Serif NLP tagger can be stored in
+<code class="file docutils literal"><span class="pre">streamcorpus_pipeline.yaml</span></code>:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="c1"># ... paste common.yaml here ...</span>
+
+<span class="l-Scalar-Plain">streamcorpus_pipeline</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">third_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/third</span>
+  <span class="l-Scalar-Plain">tmp_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">tmp</span>
+  <span class="l-Scalar-Plain">output_chunk_max_count</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">500</span>
+  <span class="l-Scalar-Plain">reader</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">yaml_files_list</span>
+  <span class="l-Scalar-Plain">incremental_transforms</span><span class="p-Indicator">:</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">language</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">guess_media_type</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">clean_html</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">hyperlink_labels</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">clean_visible</span>
+  <span class="l-Scalar-Plain">batch_transforms</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="nv">serif</span> <span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">writers</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="nv">to_kvlayer</span> <span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">hyperlink_labels</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">require_abs_url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+    <span class="l-Scalar-Plain">all_domains</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+    <span class="l-Scalar-Plain">offset_types</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="nv">BYTES</span><span class="p-Indicator">,</span> <span class="nv">CHARS</span> <span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">serif</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">path_in_third</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">serif/serif-latest</span>
+    <span class="l-Scalar-Plain">cleanup_tmp_files</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+    <span class="l-Scalar-Plain">par</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">streamcorpus_one_step</span>
+    <span class="l-Scalar-Plain">align_labels_by</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">names_in_chains</span>
+    <span class="l-Scalar-Plain">aligner_data</span><span class="p-Indicator">:</span>
+      <span class="l-Scalar-Plain">chain_selector</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ANY_MULTI_TOKEN</span>
+      <span class="l-Scalar-Plain">annotator_id</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">annotator</span>
+</pre></div>
+</div>
+<p>Then you can run</p>
+<div class="highlight-bash"><div class="highlight"><pre>streamcorpus_pipeline <span class="se">\</span>
+  --config streamcorpus_pipeline.yaml --input labels.yaml
+</pre></div>
+</div>
+</div>
+<div class="section" id="module-dependencies">
+<h2>1.3. Module dependencies<a class="headerlink" href="#module-dependencies" title="Permalink to this headline">¶</a></h2>
+<p class="graphviz">
+<img src="../_images/graphviz-c26ab0419b23992e6514c0cdaaa010c40efd7e00.png" alt="digraph modules {
+streamcorpus_pipeline -&gt; streamcorpus
+streamcorpus_pipeline -&gt; yakonfig
+streamcorpus_pipeline -&gt; kvlayer [style=dotted]
+streamcorpus_pipeline -&gt; dblogger
+streamcorpus_pipeline -&gt; rejester [style=dotted]
+rejester -&gt; yakonfig
+kvlayer -&gt; yakonfig
+}" />
+</p>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="../index.html">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">1. Overview of StreamCorpus software components</a><ul>
+<li><a class="reference internal" href="#invocation">1.1. Invocation</a></li>
+<li><a class="reference internal" href="#example">1.2. Example</a></li>
+<li><a class="reference internal" href="#module-dependencies">1.3. Module dependencies</a></li>
+</ul>
+</li>
+</ul>
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="../index.html"
+                        title="previous chapter">Welcome to StreamCorpus</a></p>
+  <h4>Next topic</h4>
+  <p class="topless"><a href="streamcorpus.html"
+                        title="next chapter">2. <code class="docutils literal"><span class="pre">streamcorpus</span></code> &#8212; single-document data representation</a></p>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/sphinx-docs/overview.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="streamcorpus.html" title="2. streamcorpus — single-document data representation"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="../index.html" title="Welcome to StreamCorpus"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

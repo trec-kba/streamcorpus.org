@@ -1,0 +1,153 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>kvlayer._exceptions &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for kvlayer._exceptions</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Exceptions for :mod:`kvlayer`.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2014 Diffeo, Inc.</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+
+<span class="k">class</span> <span class="nc">KVLayerError</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Base class for all :mod:`kvlayer` exceptions.&#39;&#39;&#39;</span>
+    <span class="k">pass</span>
+
+
+<span class="k">class</span> <span class="nc">ConfigurationError</span><span class="p">(</span><span class="n">KVLayerError</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;An invalid value was passed to an object.</span>
+
+<span class="sd">    The value is probably something user-provided, such as the name of</span>
+<span class="sd">    the storage backend.  This error is raised if the invalid value is</span>
+<span class="sd">    not detected until code is being executed.  If the value can be</span>
+<span class="sd">    detected during the :mod:`yakonfig` configuration phase, then</span>
+<span class="sd">    :class:`yakonfig.ConfigurationError` will be raised there instead.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">pass</span>
+
+
+<span class="k">class</span> <span class="nc">ProgrammerError</span><span class="p">(</span><span class="n">KVLayerError</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;The API was used incorrectly.&#39;&#39;&#39;</span>
+    <span class="k">pass</span>
+
+
+<span class="k">class</span> <span class="nc">StorageClosed</span><span class="p">(</span><span class="n">KVLayerError</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;A storage object was used after it was explicitly closed.&#39;&#39;&#39;</span>
+    <span class="k">pass</span>
+
+
+<div class="viewcode-block" id="DatabaseEmpty"><a class="viewcode-back" href="../../sphinx-docs/kvlayer.html#kvlayer.DatabaseEmpty">[docs]</a><span class="k">class</span> <span class="nc">DatabaseEmpty</span><span class="p">(</span><span class="n">KVLayerError</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+</div>
+<div class="viewcode-block" id="BadKey"><a class="viewcode-back" href="../../sphinx-docs/kvlayer.html#kvlayer.BadKey">[docs]</a><span class="k">class</span> <span class="nc">BadKey</span><span class="p">(</span><span class="n">KVLayerError</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;A key value passed to a kvlayer function was not of the correct form.</span>
+
+<span class="sd">    Keys must be tuples of a fixed length and with specific types.</span>
+<span class="sd">    The length of the tuple is specified in the initial call to</span>
+<span class="sd">    :meth:`kvlayer._abstract_storage.AbstractStorage.setup_namespace`.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+
+</div>
+<span class="k">class</span> <span class="nc">SerializationError</span><span class="p">(</span><span class="n">KVLayerError</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Converting between an item and a serialized form failed.&quot;&quot;&quot;</span>
+    <span class="k">pass</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

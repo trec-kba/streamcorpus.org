@@ -1,0 +1,432 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._spinn3r_feed_storage &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._spinn3r_feed_storage</h1><div class="highlight"><pre>
+<span class="sd">&quot;&quot;&quot;Read spinn3r protostreams directly into the pipeline.</span>
+
+<span class="sd">Purpose</span>
+<span class="sd">=======</span>
+
+<span class="sd">Read a spinn3r.com protostream file, the spinn3r.com Web API, or</span>
+<span class="sd">continuously fetch spinn3r.com streams as a reader.</span>
+
+<span class="sd">In your streamcorpus-pipeline YAML configuration, specify::</span>
+
+<span class="sd">    reader: from_spinn3r_feed</span>
+
+<span class="sd">Give a local file name containing a fetched spinn3r protostream file</span>
+<span class="sd">as the input to the pipeline.</span>
+
+<span class="sd">Implementation details</span>
+<span class="sd">======================</span>
+
+<span class="sd">The feed file itself consists of a sequence of length-prefixed chunks,</span>
+<span class="sd">with alternating type and data chunks.  The file continues until a</span>
+<span class="sd">&quot;type&quot; chunk specifies &quot;END&quot;.  Each of the data chunks should produce</span>
+<span class="sd">one StreamItem into the rest of the pipeline.</span>
+
+<span class="sd">`from_spinn3r_feed` is the main reader.  It is exported to the</span>
+<span class="sd">pipeline configuration in `streamcorpus_pipeline.stages`.</span>
+
+<span class="sd">The spinn3r data can be injected externally.  Create a dictionary</span>
+<span class="sd">mapping keys to the protostream data from spinn3r, cause it to be</span>
+<span class="sd">passed to the stage constructor, set a configuration parameter</span>
+<span class="sd">``use_prefetched: true``, and invoke the pipeline with the provided</span>
+<span class="sd">key as the input filename.  The key can be any valid string.</span>
+
+<span class="sd">`ProtoStreamReader` will read chunks of the spinn3r document, typically</span>
+<span class="sd">in the spinn3rApi_pb2.Entry Google protobuf format.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2014 Diffeo, Inc.</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+
+<span class="kn">import</span> <span class="nn">itertools</span>
+<span class="kn">import</span> <span class="nn">json</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">from</span> <span class="nn">StringIO</span> <span class="kn">import</span> <span class="n">StringIO</span>
+<span class="kn">import</span> <span class="nn">zlib</span>
+
+<span class="kn">from</span> <span class="nn">google.protobuf.internal.decoder</span> <span class="kn">import</span> <span class="n">_DecodeVarint</span>
+
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._exceptions</span> <span class="kn">import</span> <span class="n">ConfigurationError</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._spinn3r.protoStream_pb2</span> \
+    <span class="kn">import</span> <span class="n">ProtoStreamDelimiter</span><span class="p">,</span> <span class="n">ProtoStreamHeader</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._spinn3r.spinn3rApi_pb2</span> <span class="kn">import</span> <span class="n">Entry</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">ProtoStreamReader</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Reader object for spinn3r &quot;protostream&quot; files.</span>
+
+<span class="sd">    These files are produced by spinn3r&#39;s external API.  The actual</span>
+<span class="sd">    files consist of length-prefixed chunks, where the length is in</span>
+<span class="sd">    protobuf varint format.  The actual file consists of a header,</span>
+<span class="sd">    then alternating &quot;delimiter&quot; and data chunks.  The file ends when</span>
+<span class="sd">    a delimiter chunk has an &quot;end&quot; flag.</span>
+
+<span class="sd">    Create this with a file-like object, and then iterate through</span>
+<span class="sd">    the produced chunks.  By default it will produce spinn3rApi_pb2.Entry</span>
+<span class="sd">    objects out.  For example:</span>
+
+<span class="sd">    &gt;&gt;&gt; with open(filename, &#39;rb&#39;) as f:</span>
+<span class="sd">    ...   reader = ProtoStreamReader(f)</span>
+<span class="sd">    ...   for entry in reader:</span>
+<span class="sd">    ...     ...</span>
+
+<span class="sd">    The `header` property will contain the</span>
+<span class="sd">    protoStream_pb2.ProtoStreamHeader object from the file header.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">f</span><span class="p">,</span> <span class="n">entry_type</span><span class="o">=</span><span class="n">Entry</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Create a new ProtoStreamReader.</span>
+
+<span class="sd">        ``f``</span>
+<span class="sd">          file-like object to read</span>
+<span class="sd">        ``entry_type``</span>
+<span class="sd">          type of objects in this feed</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ProtoStreamReader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">f</span> <span class="o">=</span> <span class="n">f</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_header</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_entry_type</span> <span class="o">=</span> <span class="n">entry_type</span>
+
+    <span class="k">def</span> <span class="nf">_unread</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">b</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Push byte array &#39;b&#39; on to the front of the prefix list; this</span>
+<span class="sd">        undoes part of a _read().  This bytes will be the next to read.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span> <span class="o">=</span> <span class="n">b</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span>
+
+    <span class="k">def</span> <span class="nf">_read</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Read (up to) &#39;n&#39; bytes from the underlying file.  If any bytes</span>
+<span class="sd">        have been pushed in with _unread() those are returned first.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">n</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span><span class="p">):</span>
+            <span class="c"># the read can be fulfilled entirely from the prefix</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span><span class="p">[:</span><span class="n">n</span><span class="p">]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span><span class="p">[</span><span class="n">n</span><span class="p">:]</span>
+            <span class="k">return</span> <span class="n">result</span>
+        <span class="c"># otherwise we need to read some</span>
+        <span class="n">n</span> <span class="o">-=</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_prefix</span> <span class="o">=</span> <span class="s">&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="k">def</span> <span class="nf">_read_varint</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Read exactly a varint out of the underlying file.&quot;&quot;&quot;</span>
+        <span class="n">buf</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read</span><span class="p">(</span><span class="mi">8</span><span class="p">)</span>
+        <span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">l</span><span class="p">)</span> <span class="o">=</span> <span class="n">_DecodeVarint</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_unread</span><span class="p">(</span><span class="n">buf</span><span class="p">[</span><span class="n">l</span><span class="p">:])</span>
+        <span class="k">return</span> <span class="n">n</span>
+
+    <span class="k">def</span> <span class="nf">_read_block</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Read a length from the file, then read that many bytes.</span>
+<span class="sd">        Return the read block.&quot;&quot;&quot;</span>
+        <span class="n">l</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_varint</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read</span><span class="p">(</span><span class="n">l</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_read_a</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">cls</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Read some protobuf-encoded object stored in a single block</span>
+<span class="sd">        out of the file.&quot;&quot;&quot;</span>
+        <span class="n">o</span> <span class="o">=</span> <span class="n">cls</span><span class="p">()</span>
+        <span class="n">o</span><span class="o">.</span><span class="n">ParseFromString</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_read_block</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">o</span>
+
+    <span class="k">def</span> <span class="nf">_bootstrap</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Read the header block out of the underlying file.</span>
+<span class="sd">        After this (and forevermore afterwards) the file will point</span>
+<span class="sd">        at the start of a ProtoStreamDelimiter block.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_header</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_a</span><span class="p">(</span><span class="n">ProtoStreamHeader</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">header</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_header</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_bootstrap</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_header</span>
+
+    <span class="k">def</span> <span class="nf">__iter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Iterate through the objects in the file.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_header</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_bootstrap</span><span class="p">()</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="n">delim</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_a</span><span class="p">(</span><span class="n">ProtoStreamDelimiter</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">delim</span><span class="o">.</span><span class="n">delimiter_type</span> <span class="o">==</span> <span class="n">ProtoStreamDelimiter</span><span class="o">.</span><span class="n">END</span><span class="p">:</span>
+                <span class="k">return</span>
+            <span class="k">assert</span> <span class="n">delim</span><span class="o">.</span><span class="n">delimiter_type</span> <span class="o">==</span> <span class="n">ProtoStreamDelimiter</span><span class="o">.</span><span class="n">ENTRY</span>
+            <span class="k">yield</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_a</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_entry_type</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="from_spinn3r_feed"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._spinn3r_feed_storage.from_spinn3r_feed">[docs]</a><span class="k">class</span> <span class="nc">from_spinn3r_feed</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;streamcorpus-pipeline reader for spinn3r.com feeds.</span>
+
+<span class="sd">    Accepted configuration items include:</span>
+
+<span class="sd">    ``use_prefetched``</span>
+<span class="sd">      If set to a boolean value, always/never use prefetched data</span>
+<span class="sd">      (default: unset; use prefetched data if present)</span>
+<span class="sd">    ``publisher_type``</span>
+<span class="sd">      If set, only return stream items whose publisher type in the</span>
+<span class="sd">      spinn3r feed exactly matches this string</span>
+
+<span class="sd">    A dictionary from URL to prefetched data can be passed as a</span>
+<span class="sd">    parameter to the stage constructor.  If `use_prefetched` is</span>
+<span class="sd">    :const:`True` then all input strings must be present in the</span>
+<span class="sd">    prefetch dictionary, and this stage never makes an outgoing</span>
+<span class="sd">    network connection.  If `use_prefetched` is :const:`False` then</span>
+<span class="sd">    the prefetch dictionary is ignored.  Otherwise if an input string</span>
+<span class="sd">    is present in the prefetch dictionary, then the prefetched data is</span>
+<span class="sd">    used, and if not, it is fetched from the network.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;from_spinn3r_feed&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="p">{},</span> <span class="n">prefetched</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">from_spinn3r_feed</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">prefetched</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">prefetched</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">prefetched</span> <span class="o">=</span> <span class="n">prefetched</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="c"># Do we have prefetched data for i_str?  Can/should/must we</span>
+        <span class="c"># use it?</span>
+        <span class="k">if</span> <span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;use_prefetched&#39;</span><span class="p">,</span> <span class="bp">False</span><span class="p">)</span> <span class="ow">and</span>
+             <span class="n">i_str</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">prefetched</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span><span class="s">&#39;from_spinn3r_feed &quot;use_prefetched&quot; &#39;</span>
+                                     <span class="s">&#39;is set, but prefetched content is &#39;</span>
+                                     <span class="s">&#39;missing&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;use_prefetched&#39;</span><span class="p">,</span> <span class="bp">True</span><span class="p">)</span> <span class="ow">and</span>
+             <span class="n">i_str</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">prefetched</span><span class="p">)):</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;using prefetched content for {0}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">i_str</span><span class="p">))</span>
+            <span class="n">stream</span> <span class="o">=</span> <span class="n">StringIO</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">prefetched</span><span class="p">[</span><span class="n">i_str</span><span class="p">])</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;getting local content from {0}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">i_str</span><span class="p">))</span>
+            <span class="n">stream</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">i_str</span><span class="p">,</span> <span class="s">&#39;rb&#39;</span><span class="p">)</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">count</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="c"># spinn3r publisher type == streamitem source</span>
+            <span class="n">source</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;publisher_type&#39;</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">_make_stream_items</span><span class="p">(</span><span class="n">stream</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">source</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span> <span class="ow">and</span> <span class="n">si</span><span class="o">.</span><span class="n">source</span> <span class="o">!=</span> <span class="n">source</span><span class="p">:</span>
+                    <span class="k">continue</span>
+                <span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">yield</span> <span class="n">si</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;produced {0} stream items&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">count</span><span class="p">))</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="n">stream</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+</div>
+<span class="k">def</span> <span class="nf">_generate_stream_items</span><span class="p">(</span><span class="n">data</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">_make_stream_items</span><span class="p">(</span><span class="n">StringIO</span><span class="p">(</span><span class="n">data</span><span class="p">))</span>
+
+
+<span class="k">def</span> <span class="nf">_make_stream_items</span><span class="p">(</span><span class="n">f</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Given a spinn3r feed, produce a sequence of valid StreamItems.</span>
+
+<span class="sd">    Because of goopy Python interactions, you probably need to call</span>
+<span class="sd">    this and re-yield its results, as</span>
+
+<span class="sd">    &gt;&gt;&gt; with open(filename, &#39;rb&#39;) as f:</span>
+<span class="sd">    ...   for si in _make_stream_items(f):</span>
+<span class="sd">    ...     yield si</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">reader</span> <span class="o">=</span> <span class="n">ProtoStreamReader</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">itertools</span><span class="o">.</span><span class="n">ifilter</span><span class="p">(</span>
+        <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">x</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">,</span>
+        <span class="n">itertools</span><span class="o">.</span><span class="n">imap</span><span class="p">(</span><span class="n">_make_stream_item</span><span class="p">,</span> <span class="n">reader</span><span class="p">))</span>
+
+
+<span class="k">def</span> <span class="nf">_make_stream_item</span><span class="p">(</span><span class="n">entry</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Given a single spinn3r feed entry, produce a single StreamItem.</span>
+
+<span class="sd">    Returns &#39;None&#39; if a complete item can&#39;t be constructed.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="c"># get standard metadata, assuming it&#39;s present...</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">entry</span><span class="p">,</span> <span class="s">&#39;permalink_entry&#39;</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">None</span>
+    <span class="n">pe</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">permalink_entry</span>
+
+    <span class="c"># ...and create a streamitem...</span>
+    <span class="n">si</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">make_stream_item</span><span class="p">(</span>
+        <span class="n">pe</span><span class="o">.</span><span class="n">date_found</span><span class="p">[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="s">&#39;.0Z&#39;</span><span class="p">,</span>
+        <span class="n">pe</span><span class="o">.</span><span class="n">canonical_link</span><span class="o">.</span><span class="n">href</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">))</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_time</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;failed to generate stream_time from {0!r}&#39;</span>
+                     <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pe</span><span class="o">.</span><span class="n">date_found</span><span class="p">))</span>
+        <span class="k">return</span> <span class="bp">None</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">abs_url</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;failed to generate abs_url from {0!r}&#39;</span>
+                     <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">pe</span><span class="o">.</span><span class="n">canonical_link</span><span class="o">.</span><span class="n">href</span><span class="p">))</span>
+        <span class="k">return</span> <span class="bp">None</span>
+
+    <span class="c"># ...filling in the actual data</span>
+    <span class="n">si</span><span class="o">.</span><span class="n">body</span> <span class="o">=</span> <span class="n">_make_content_item</span><span class="p">(</span>
+        <span class="n">pe</span><span class="o">.</span><span class="n">content</span><span class="p">,</span>
+        <span class="n">alternate_data</span><span class="o">=</span><span class="n">entry</span><span class="o">.</span><span class="n">feed_entry</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">None</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">None</span>
+
+    <span class="k">if</span> <span class="n">pe</span><span class="o">.</span><span class="n">content_extract</span><span class="o">.</span><span class="n">data</span><span class="p">:</span>
+        <span class="n">si</span><span class="o">.</span><span class="n">other_content</span><span class="p">[</span><span class="s">&#39;extract&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">_make_content_item</span><span class="p">(</span><span class="n">pe</span><span class="o">.</span><span class="n">content_extract</span><span class="p">)</span>
+    <span class="n">si</span><span class="o">.</span><span class="n">other_content</span><span class="p">[</span><span class="s">&#39;title&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">ContentItem</span><span class="p">(</span>
+        <span class="n">raw</span><span class="o">=</span><span class="n">pe</span><span class="o">.</span><span class="n">title</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">),</span>
+        <span class="n">media_type</span><span class="o">=</span><span class="n">pe</span><span class="o">.</span><span class="n">content_extract</span><span class="o">.</span><span class="n">mime_type</span><span class="p">,</span>
+        <span class="n">encoding</span><span class="o">=</span><span class="s">&#39;UTF-8&#39;</span><span class="p">)</span>
+    <span class="n">si</span><span class="o">.</span><span class="n">other_content</span><span class="p">[</span><span class="s">&#39;feed_entry_title&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">ContentItem</span><span class="p">(</span>
+        <span class="n">raw</span><span class="o">=</span><span class="n">entry</span><span class="o">.</span><span class="n">feed_entry</span><span class="o">.</span><span class="n">title</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">),</span>
+        <span class="n">media_type</span><span class="o">=</span><span class="n">entry</span><span class="o">.</span><span class="n">feed_entry</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">mime_type</span><span class="p">,</span>
+        <span class="n">encoding</span><span class="o">=</span><span class="s">&#39;UTF-8&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">feed_entry</span><span class="o">.</span><span class="n">content</span><span class="o">.</span><span class="n">data</span><span class="p">:</span>
+        <span class="n">si</span><span class="o">.</span><span class="n">other_content</span><span class="p">[</span><span class="s">&#39;feed_entry&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">_make_content_item</span><span class="p">(</span>
+            <span class="n">entry</span><span class="o">.</span><span class="n">feed_entry</span><span class="o">.</span><span class="n">content</span><span class="p">)</span>
+    <span class="n">si</span><span class="o">.</span><span class="n">source_metadata</span><span class="p">[</span><span class="s">&#39;lang&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">pe</span><span class="o">.</span><span class="n">lang</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">code</span>
+    <span class="n">si</span><span class="o">.</span><span class="n">source_metadata</span><span class="p">[</span><span class="s">&#39;author&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span>
+        <span class="nb">dict</span><span class="p">(</span>
+            <span class="n">name</span><span class="o">=</span><span class="n">pe</span><span class="o">.</span><span class="n">author</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+            <span class="n">email</span><span class="o">=</span><span class="n">pe</span><span class="o">.</span><span class="n">author</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">email</span><span class="p">,</span>
+            <span class="n">link</span><span class="o">=</span><span class="n">pe</span><span class="o">.</span><span class="n">author</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">link</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">href</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+    <span class="n">si</span><span class="o">.</span><span class="n">source</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">source</span><span class="o">.</span><span class="n">publisher_type</span>
+    <span class="k">return</span> <span class="n">si</span>
+
+
+<span class="k">def</span> <span class="nf">_make_content_item</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="n">mime_type</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">alternate_data</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Create a ContentItem from a node in the spinn3r data tree.</span>
+
+<span class="sd">    The ContentItem is created with raw data set to ``node.data``,</span>
+<span class="sd">    decompressed if the node&#39;s encoding is &#39;zlib&#39;, and UTF-8</span>
+<span class="sd">    normalized, with a MIME type from ``node.mime_type``.</span>
+
+<span class="sd">    ``node``</span>
+<span class="sd">      the actual node from the spinn3r protobuf data</span>
+<span class="sd">    ``mime_type``</span>
+<span class="sd">      string MIME type to use (defaults to ``node.mime_type``)</span>
+<span class="sd">    ``alternate_data``</span>
+<span class="sd">      alternate (compressed) data to use, if ``node.data`` is missing</span>
+<span class="sd">      or can&#39;t be decompressed</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">data</span>
+    <span class="k">if</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">node</span><span class="p">,</span> <span class="s">&#39;encoding&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span> <span class="o">==</span> <span class="s">&#39;zlib&#39;</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">raw</span> <span class="o">=</span> <span class="n">zlib</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">alternate_data</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">raw</span> <span class="o">=</span> <span class="n">zlib</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span><span class="n">alternate_data</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="n">exc</span>  <span class="c"># the original exception</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span>
+    <span class="k">if</span> <span class="n">mime_type</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">mime_type</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">mime_type</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">ContentItem</span><span class="p">(</span><span class="n">raw</span><span class="o">=</span><span class="n">raw</span><span class="p">,</span> <span class="n">media_type</span><span class="o">=</span><span class="n">mime_type</span><span class="p">)</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

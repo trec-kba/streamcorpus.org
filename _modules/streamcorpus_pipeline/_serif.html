@@ -1,0 +1,433 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._serif &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._serif</h1><div class="highlight"><pre>
+<span class="c">#!/usr/bin/env python</span>
+<span class="sd">&#39;&#39;&#39;streamcorpus_pipeline.BatchTransform for Serif</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2015 Diffeo, Inc.</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">gc</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">shutil</span>
+<span class="kn">import</span> <span class="nn">subprocess</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+<span class="kn">import</span> <span class="nn">uuid</span>
+
+<span class="kn">from</span> <span class="nn">yakonfig</span> <span class="kn">import</span> <span class="n">ConfigurationError</span>
+
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">BatchTransform</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._taggers</span> <span class="kn">import</span> <span class="n">make_memory_info_msg</span><span class="p">,</span> <span class="n">align_labels</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._exceptions</span> <span class="kn">import</span> <span class="n">PipelineOutOfMemory</span><span class="p">,</span> \
+    <span class="n">PipelineBaseException</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="serif"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._serif.serif">[docs]</a><span class="k">class</span> <span class="nc">serif</span><span class="p">(</span><span class="n">BatchTransform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Batch transform to parse and tag documents with Serif.</span>
+
+<span class="sd">    Serif must be installed externally, somewhere underneath the</span>
+<span class="sd">    directory configured as `third_dir_path` in the top-level</span>
+<span class="sd">    pipeline configuration.</span>
+
+<span class="sd">    A typical Serif pipeline configuration looks like:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        streamcorpus_pipeline:</span>
+<span class="sd">          tmp_dir_path: tmp</span>
+<span class="sd">          third_dir_path: /opt/diffeo/third</span>
+<span class="sd">          reader: ...</span>
+<span class="sd">          incremental_transforms:</span>
+<span class="sd">            - language</span>
+<span class="sd">            - guess_media_type</span>
+<span class="sd">            - clean_html</span>
+<span class="sd">            - clean_visible</span>
+<span class="sd">          batch_transforms: [serif]</span>
+<span class="sd">          writers: [...]</span>
+
+<span class="sd">          serif:</span>
+<span class="sd">            path_in_third: serif/serif-latest</span>
+<span class="sd">            par: streamcorpus_one_step</span>
+<span class="sd">            align_labels_by: names_in_chains</span>
+<span class="sd">            aligner_data:</span>
+<span class="sd">              chain_selector: ALL</span>
+<span class="sd">              annotator_id: annotator</span>
+
+<span class="sd">    Configuration options include:</span>
+
+<span class="sd">    `path_in_third` (required)</span>
+<span class="sd">      Relative path in `third_dir_path` to directory containing serif</span>
+<span class="sd">      data directories</span>
+
+<span class="sd">    `serif_exe` (default: bin/x86_64/Serif)</span>
+<span class="sd">      Relative path within `path_in_third` to the Serif executable file</span>
+
+<span class="sd">    `par` (default: streamcorpus_one_step)</span>
+<span class="sd">      Serif policy configuration; this is typically ``streamcorpus_one_step``,</span>
+<span class="sd">      but may also be ``streamcorpus_read_serifxml`` or</span>
+<span class="sd">      ``streamcorpus_generate_serifxml``</span>
+
+<span class="sd">    `par_additions`</span>
+<span class="sd">      Map from poicy configuration name to list of strings to append</span>
+<span class="sd">      as additional lines to customize the policy.</span>
+
+<span class="sd">    `cleanup_tmp_files` (default: true)</span>
+<span class="sd">      Delete the intermediate files used by Serif</span>
+
+<span class="sd">    The two &quot;align&quot; options control how ratings on the document</span>
+<span class="sd">    are associated with tokens generated by Serif.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;serif&#39;</span>
+    <span class="n">tagger_id</span> <span class="o">=</span> <span class="s">&#39;serif&#39;</span>
+
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;path_in_third&#39;</span><span class="p">:</span> <span class="s">&#39;serif/serif-latest&#39;</span><span class="p">,</span>
+        <span class="s">&#39;par&#39;</span><span class="p">:</span> <span class="s">&#39;streamcorpus_one_step&#39;</span><span class="p">,</span>
+        <span class="s">&#39;par_additions&#39;</span><span class="p">:</span> <span class="p">{},</span>
+        <span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+        <span class="s">&#39;serif_exe&#39;</span><span class="p">:</span> <span class="s">&#39;bin/x86_64/Serif&#39;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="c"># We expect the pipeline to force in tmp_dir_path and</span>
+        <span class="c"># third_dir_path; but these are required</span>
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="p">[</span><span class="s">&#39;path_in_third&#39;</span><span class="p">,</span> <span class="s">&#39;serif_exe&#39;</span><span class="p">,</span> <span class="s">&#39;par&#39;</span><span class="p">,</span> <span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">config</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span><span class="s">&#39;{0} requires {1} setting&#39;</span>
+                                         <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">k</span><span class="p">))</span>
+
+    <span class="c"># These two serif parameter files came from BBN via email,</span>
+    <span class="c"># the full docs are in ../../../docs/serif*txt</span>
+
+    <span class="n">serif_global_config</span> <span class="o">=</span> <span class="s">&#39;&#39;&#39;</span>
+<span class="s">#######################################################################</span>
+<span class="s">## Serif Global Configuration</span>
+<span class="s">#######################################################################</span>
+<span class="s">##</span>
+<span class="s">## This file tells Serif where it can find trained model files and the</span>
+<span class="s">## scripts that are used for scoring.  It is imported by each of the</span>
+<span class="s">## other parameter files (such as all.best-english.par).  It is not</span>
+<span class="s">## intended to be used directly.</span>
+<span class="s">##</span>
+<span class="s">## This file needs to be updated if Serif is moved or copied to a new</span>
+<span class="s">## location.  No other files should need to be changed.</span>
+<span class="s">##</span>
+<span class="s">#######################################################################</span>
+
+<span class="s">serif_home: ..</span>
+
+<span class="s">serif_data: </span><span class="si">%s</span><span class="s">erif_home%/data</span>
+<span class="s">serif_score: </span><span class="si">%s</span><span class="s">erif_home%/scoring</span>
+<span class="s">server_docs_root: </span><span class="si">%s</span><span class="s">erif_home%/doc/http_server</span>
+<span class="s">use_feature_module_BasicCipherStream: true</span>
+<span class="s">cipher_stream_always_decrypt: true</span>
+<span class="s">use_feature_module_KbaStreamCorpus: true</span>
+<span class="s">use_feature_module_HTMLDocumentReader: true</span>
+<span class="s">html_character_entities: </span><span class="si">%s</span><span class="s">erif_data%/unspec/misc/html-character-entities.listmap</span>
+<span class="s">log_threshold: ERROR</span>
+
+<span class="s">#document_split_strategy: region</span>
+<span class="s">#document_splitter_max_size:  20000</span>
+<span class="s">&#39;&#39;&#39;</span>
+
+    <span class="n">streamcorpus_one_step</span> <span class="o">=</span> <span class="s">&#39;&#39;&#39;</span>
+
+<span class="s">### WARNING: this was written by the streamcorpus_pipeline, and will be</span>
+<span class="s">### overwritten the next time the streamcorpus_pipeline runs.</span>
+
+<span class="s"># Usage: Serif streamcorpus_one_step.par CHUNK_FILES -o OUT_DIR</span>
+<span class="s">#</span>
+<span class="s"># This parameter file is used for running SERIF from start-to-end on</span>
+<span class="s"># streamcorpus chunk files.</span>
+<span class="s">#</span>
+<span class="s"># Using this parameter file, SERIF will read each of the specified</span>
+<span class="s"># chunk files, and will generate corresponding chunk files in the</span>
+<span class="s"># directory OUT_DIR/output.  Stream items whose language is English</span>
+<span class="s"># (or unspecified) will be augmented with SERIF annotations.  The</span>
+<span class="s"># input text for SERIF will be read from clean_html (when non-empty)</span>
+<span class="s"># or from clean_visible (otherwise).</span>
+
+<span class="s">INCLUDE {serif_home_par}/config.par</span>
+<span class="s">INCLUDE {serif_home_par}/master.english.par</span>
+<span class="s">INCLUDE {serif_home_par}/master.english-speed.par</span>
+<span class="s">OVERRIDE use_feature_module_KbaStreamCorpus:  true</span>
+<span class="s">OVERRIDE use_stream_corpus_driver:            true</span>
+<span class="s">OVERRIDE start_stage:                         START</span>
+<span class="s">OVERRIDE end_stage:                           output</span>
+<span class="s">OVERRIDE kba_write_results_to_chunk:          true</span>
+<span class="s">OVERRIDE parser_skip_unimportant_sentences:   false</span>
+
+<span class="s">OVERRIDE input_type:                          rawtext</span>
+<span class="s">OVERRIDE source_format:            sgm</span>
+
+<span class="s">OVERRIDE document_split_strategy: region</span>
+<span class="s">OVERRIDE document_splitter_max_size: 20000</span>
+<span class="s">#OVERRIDE log_force: kba-stream-corpus,profiling</span>
+<span class="s">#OVERRIDE kba_skip_docs_with_empty_language_code: false</span>
+<span class="s">&#39;&#39;&#39;</span>
+
+    <span class="n">streamcorpus_read_serifxml</span> <span class="o">=</span> <span class="s">&#39;&#39;&#39;</span>
+
+<span class="s">### WARNING: this was written by the streamcorpus_pipeline, and will be</span>
+<span class="s">### overwritten the next time the streamcorpus_pipeline runs.</span>
+
+<span class="s"># Usage: Serif streamcorpus_read_serifxml.par CHUNK_FILES -o OUT_DIR</span>
+<span class="s">#</span>
+<span class="s"># This parameter file is used in cases where SERIF has already been</span>
+<span class="s"># run on each stream item, and the SerifXML is stored in the tagging.</span>
+<span class="s"># This version does not need to load any SERIF models, since it</span>
+<span class="s"># expects that all serif processing has already been done.</span>
+<span class="s">#</span>
+<span class="s"># Using this parameter file, SERIF will read each of the specified</span>
+<span class="s"># chunk files, and will generate corresponding chunk files in the</span>
+<span class="s"># directory OUT_DIR/output.  Stream items whose language is English</span>
+<span class="s"># (or unspecified) are expected to contain a value for the field</span>
+<span class="s"># StreamItem.body.taggings[&#39;serif&#39;].raw_tagging, containing fully</span>
+<span class="s"># processed SerifXML output for that item.  This SerifXML output will</span>
+<span class="s"># be read, and then corresponding sentence and relation annotations</span>
+<span class="s"># will be added to the output files.</span>
+
+<span class="s">INCLUDE {serif_home_par}/config.par</span>
+<span class="s">INCLUDE {serif_home_par}/master.english.par</span>
+<span class="s">INCLUDE {serif_home_par}/master.english-speed.par</span>
+<span class="s">OVERRIDE use_feature_module_KbaStreamCorpus:  true</span>
+<span class="s">OVERRIDE use_stream_corpus_driver:            true</span>
+<span class="s">OVERRIDE start_stage:                         output</span>
+<span class="s">OVERRIDE end_stage:                           output</span>
+<span class="s">OVERRIDE kba_read_serifxml_from_chunk:        true</span>
+<span class="s">OVERRIDE kba_write_results_to_chunk:          true</span>
+<span class="s">OVERRIDE parser_skip_unimportant_sentences:   false</span>
+<span class="s">OVERRIDE source_format:                       serifxml</span>
+<span class="s">&#39;&#39;&#39;</span>
+
+    <span class="n">streamcorpus_generate_serifxml</span> <span class="o">=</span> <span class="s">&#39;&#39;&#39;</span>
+
+<span class="s">### WARNING: this was written by the streamcorpus_pipeline, and will be</span>
+<span class="s">### overwritten the next time the streamcorpus_pipeline runs.</span>
+
+<span class="s"># Usage: Serif streamcorpus_generate_serifxml.par CHUNK_FILES -o OUT_DIR</span>
+<span class="s">#</span>
+<span class="s"># This parameter file is identical to streamcorpus_one_step.par, except</span>
+<span class="s"># that: (1) it saves the serifxml output to the stream items; and (2)</span>
+<span class="s"># it does *not* save the sentence &amp; relation annotations.  I used this</span>
+<span class="s"># parameter file to generate test inputs for the</span>
+<span class="s"># streamcorpus_read_serifxml.par parameter file.</span>
+
+<span class="s"># (streamcorpus_one_step.par is defined above)</span>
+<span class="s">INCLUDE ./streamcorpus_one_step.par</span>
+<span class="s">OVERRIDE kba_write_results_to_chunk:          false</span>
+<span class="s">OVERRIDE kba_write_serifxml_to_chunk:         true</span>
+<span class="s">&#39;&#39;&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">serif</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tagger_root_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;third_dir_path&#39;</span><span class="p">],</span>
+                                             <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;path_in_third&#39;</span><span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_child</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">def</span> <span class="nf">_write_config_par</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tmp_dir</span><span class="p">,</span> <span class="n">par_file</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">par_file</span> <span class="o">==</span> <span class="s">&#39;streamcorpus_generate_serifxml&#39;</span><span class="p">:</span>
+            <span class="c"># streamcorpus_generate_serifxml INCLUDEs streamcorpus_one_step</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_write_config_par</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">,</span> <span class="s">&#39;streamcorpus_one_step&#39;</span><span class="p">,</span>
+                                   <span class="bp">self</span><span class="o">.</span><span class="n">tagger_root_path</span><span class="p">)</span>
+        <span class="n">par_data</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">par_file</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;par_additions&#39;</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">par_file</span><span class="p">,</span> <span class="p">[]):</span>
+            <span class="n">par_data</span> <span class="o">+=</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span>
+            <span class="n">par_data</span> <span class="o">+=</span> <span class="n">line</span> <span class="o">+</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span>
+        <span class="n">fpath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">,</span> <span class="n">par_file</span> <span class="o">+</span> <span class="s">&#39;.par&#39;</span><span class="p">)</span>
+        <span class="n">fout</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">fpath</span><span class="p">,</span> <span class="s">&#39;wb&#39;</span><span class="p">)</span>
+        <span class="n">fout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span>
+            <span class="n">par_data</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+                <span class="n">serif_home_par</span><span class="o">=</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tagger_root_path</span><span class="p">,</span> <span class="s">&#39;par&#39;</span><span class="p">)</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+        <span class="n">fout</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;wrote </span><span class="si">%s</span><span class="s"> (</span><span class="si">%s</span><span class="s"> bytes) to </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">par_file</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">par_data</span><span class="p">),</span>
+                     <span class="n">fpath</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">fpath</span>
+
+    <span class="k">def</span> <span class="nf">process_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chunk_path</span><span class="p">):</span>
+        <span class="n">tmp_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">],</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()))</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">mkdir</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">)</span>
+        <span class="n">par_file</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;par&#39;</span><span class="p">]</span>
+        <span class="n">par_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_write_config_par</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">,</span> <span class="n">par_file</span><span class="p">)</span>
+
+        <span class="n">tmp_chunk_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">,</span> <span class="s">&#39;output&#39;</span><span class="p">,</span>
+                                      <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">chunk_path</span><span class="p">))</span>
+
+        <span class="n">cmd</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tagger_root_path</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;serif_exe&#39;</span><span class="p">]),</span>
+            <span class="n">par_path</span><span class="p">,</span>
+            <span class="s">&#39;-o&#39;</span><span class="p">,</span> <span class="n">tmp_dir</span><span class="p">,</span>
+            <span class="n">chunk_path</span><span class="p">,</span>
+        <span class="p">]</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;serif cmd: </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">cmd</span><span class="p">)</span>
+
+        <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="c"># make sure we are using as little memory as possible</span>
+        <span class="n">gc</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_child</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span>
+                                           <span class="n">shell</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;error running serif cmd </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">cmd</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+            <span class="n">msg</span> <span class="o">+=</span> <span class="n">make_memory_info_msg</span><span class="p">()</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">raise</span>
+
+        <span class="n">s_out</span><span class="p">,</span> <span class="n">errors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">communicate</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">137</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="s">&#39;tagger returncode = 137</span><span class="se">\n</span><span class="s">&#39;</span> <span class="o">+</span> <span class="n">errors</span>
+                <span class="n">msg</span> <span class="o">+=</span> <span class="n">make_memory_info_msg</span><span class="p">()</span>
+                <span class="c"># maybe get a tail of /var/log/messages</span>
+                <span class="k">raise</span> <span class="n">PipelineOutOfMemory</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="s">&#39;Exception&#39;</span> <span class="ow">in</span> <span class="n">errors</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;child code </span><span class="si">%s</span><span class="s"> errorlen=</span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span>
+                             <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">returncode</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">errors</span><span class="p">))</span>
+                <span class="k">raise</span> <span class="n">PipelineBaseException</span><span class="p">(</span><span class="n">errors</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">PipelineBaseException</span><span class="p">(</span><span class="s">&#39;tagger exited with </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span>
+                                            <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">returncode</span><span class="p">)</span>
+
+        <span class="c"># generated new tokens, so align labels with them</span>
+        <span class="n">align_labels</span><span class="p">(</span><span class="n">tmp_chunk_path</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">,</span> <span class="bp">True</span><span class="p">):</span>
+            <span class="c"># default: cleanup tmp directory</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">tmp_chunk_path</span><span class="p">,</span> <span class="n">chunk_path</span><span class="p">)</span>
+            <span class="n">shutil</span><span class="o">.</span><span class="n">rmtree</span><span class="p">(</span><span class="n">tmp_dir</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c"># for development, no cleanup, leave tmp_file</span>
+            <span class="n">chunk_path_save</span> <span class="o">=</span> <span class="p">(</span><span class="s">&#39;{0}_pre_serif_{1}&#39;</span>
+                               <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">chunk_path</span><span class="p">,</span>
+                                       <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">getmtime</span><span class="p">(</span><span class="n">chunk_path</span><span class="p">)))</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">chunk_path</span><span class="p">,</span> <span class="n">chunk_path_save</span><span class="p">)</span>
+            <span class="n">shutil</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">tmp_chunk_path</span><span class="p">,</span> <span class="n">chunk_path</span><span class="p">)</span>
+
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;finished tagging in </span><span class="si">%.1f</span><span class="s"> seconds&#39;</span> <span class="o">%</span> <span class="n">elapsed</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">elapsed</span>
+
+    <span class="k">def</span> <span class="nf">shutdown</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        send SIGTERM to the tagger child process</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">terminate</span><span class="p">()</span>
+            <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+                    <span class="c"># child is already gone, possibly because it ran</span>
+                    <span class="c"># out of memory and caused us to shutdown</span>
+                    <span class="k">pass</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

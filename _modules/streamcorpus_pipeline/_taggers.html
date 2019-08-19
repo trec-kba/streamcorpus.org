@@ -1,0 +1,874 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._taggers &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._taggers</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Defines TaggerBatchTransform base class for wrapping taggers that</span>
+<span class="sd">generate Tokens with automatic annotation.</span>
+
+<span class="sd">This software is released under an MIT/X11 open source license.</span>
+
+<span class="sd">Copyright 2012-2013 Diffeo, Inc.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">collections</span>
+<span class="kn">import</span> <span class="nn">exceptions</span>
+<span class="kn">import</span> <span class="nn">gc</span>
+<span class="kn">import</span> <span class="nn">itertools</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">shutil</span>
+<span class="kn">import</span> <span class="nn">subprocess</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+
+<span class="kn">import</span> <span class="nn">regex</span> <span class="kn">as</span> <span class="nn">re</span>
+
+<span class="kn">import</span> <span class="nn">xml.dom.minidom</span>
+
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus</span> <span class="kn">import</span> <span class="n">Chunk</span><span class="p">,</span> <span class="n">Tagging</span><span class="p">,</span> <span class="n">Label</span><span class="p">,</span> <span class="n">OffsetType</span><span class="p">,</span> <span class="n">add_annotation</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._clean_visible</span> <span class="kn">import</span> <span class="n">make_clean_visible_file</span><span class="p">,</span> \
+    <span class="n">cleanse</span>
+<span class="kn">from</span> <span class="nn">sortedcollection</span> <span class="kn">import</span> <span class="n">SortedCollection</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._exceptions</span> <span class="kn">import</span> <span class="n">PipelineOutOfMemory</span><span class="p">,</span> \
+    <span class="n">PipelineBaseException</span><span class="p">,</span> <span class="n">InvalidStreamItem</span>
+<span class="kn">import</span> <span class="nn">streamcorpus_pipeline._memory</span> <span class="kn">as</span> <span class="nn">_memory</span>
+<span class="kn">import</span> <span class="nn">streamcorpus_pipeline.stages</span>
+<span class="kn">from</span> <span class="nn">yakonfig</span> <span class="kn">import</span> <span class="n">ConfigurationError</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">make_chains_with_names</span><span class="p">(</span><span class="n">sentences</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    assemble in-doc coref chains by mapping equiv_id to tokens and</span>
+<span class="sd">    their cleansed name strings</span>
+
+<span class="sd">    :param sentences: iterator over token generators</span>
+<span class="sd">    :returns dict:</span>
+<span class="sd">        keys are equiv_ids,</span>
+<span class="sd">        values are tuple(concatentated name string, list of tokens)</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="c">## if an equiv_id is -1, then the token is classified into some</span>
+    <span class="c">## entity_type but has not other tokens in its chain.  We don&#39;t</span>
+    <span class="c">## want these all lumped together, so we give them distinct &quot;fake&quot;</span>
+    <span class="c">## equiv_id other than -1 -- counting negatively to avoid</span>
+    <span class="c">## collisions with &quot;real&quot; equiv_ids</span>
+    <span class="n">fake_equiv_ids</span> <span class="o">=</span> <span class="o">-</span><span class="mi">2</span>
+
+    <span class="c">## use a default dictionary</span>
+    <span class="n">equiv_ids</span> <span class="o">=</span> <span class="n">collections</span><span class="o">.</span><span class="n">defaultdict</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="p">(</span><span class="nb">set</span><span class="p">(),</span> <span class="nb">set</span><span class="p">()))</span>
+
+    <span class="k">for</span> <span class="n">tagger_id</span><span class="p">,</span> <span class="n">sents</span> <span class="ow">in</span> <span class="n">sentences</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">sent</span> <span class="ow">in</span> <span class="n">sents</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">sent</span><span class="o">.</span><span class="n">tokens</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">tok</span><span class="o">.</span><span class="n">entity_type</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+
+                    <span class="c">## get an appropriate equiv_id</span>
+                    <span class="k">if</span> <span class="n">tok</span><span class="o">.</span><span class="n">equiv_id</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+                        <span class="n">eqid</span> <span class="o">=</span> <span class="n">fake_equiv_ids</span>
+                        <span class="n">fake_equiv_ids</span> <span class="o">-=</span> <span class="mi">1</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">eqid</span> <span class="o">=</span> <span class="n">tok</span><span class="o">.</span><span class="n">equiv_id</span>
+
+                    <span class="c">## store the name parts initially as a set</span>
+                    <span class="n">equiv_ids</span><span class="p">[</span><span class="n">eqid</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">cleanse</span><span class="p">(</span><span class="n">tok</span><span class="o">.</span><span class="n">token</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)))</span>
+                    <span class="c">## carry a *reference* to the entire Token object</span>
+                    <span class="n">equiv_ids</span><span class="p">[</span><span class="n">eqid</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">tok</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">equiv_ids</span>
+
+<span class="k">def</span> <span class="nf">ALL_mentions</span><span class="p">(</span><span class="n">target_mentions</span><span class="p">,</span> <span class="n">chain_mentions</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    For each name string in the target_mentions list, searches through</span>
+<span class="sd">    all chain_mentions looking for any cleansed Token.token that</span>
+<span class="sd">    contains the name.  Returns True only if all of the target_mention</span>
+<span class="sd">    strings appeared as substrings of at least one cleansed</span>
+<span class="sd">    Token.token.  Otherwise, returns False.</span>
+
+<span class="sd">    :type target_mentions: list of basestring</span>
+<span class="sd">    :type chain_mentions: list of basestring</span>
+
+<span class="sd">    :returns bool:</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">found_all</span> <span class="o">=</span> <span class="bp">True</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">target_mentions</span><span class="p">:</span>
+        <span class="n">found_one</span> <span class="o">=</span> <span class="bp">False</span>
+        <span class="k">for</span> <span class="n">chain_ment</span> <span class="ow">in</span> <span class="n">chain_mentions</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">chain_ment</span><span class="p">:</span>
+                <span class="n">found_one</span> <span class="o">=</span> <span class="bp">True</span>
+                <span class="k">break</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">found_one</span><span class="p">:</span>
+            <span class="n">found_all</span> <span class="o">=</span> <span class="bp">False</span>
+            <span class="k">break</span>
+    <span class="k">return</span> <span class="n">found_all</span>
+
+
+<span class="k">def</span> <span class="nf">ANY_MULTI_TOKEN_mentions</span><span class="p">(</span><span class="n">multi_token_target_mentions</span><span class="p">,</span> <span class="n">chain_mentions</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    For each name string (potentially consisting of multiple tokens) in the</span>
+<span class="sd">    target_mentions list, searches through all chain_mentions looking for any</span>
+<span class="sd">    cleansed Token.token that contains all the tokens in the name.  Returns</span>
+<span class="sd">    True only if all of the target_mention strings appeared as substrings of at</span>
+<span class="sd">    least one cleansed Token.token.  Otherwise, returns False.</span>
+
+<span class="sd">    :type target_mentions: list of basestring</span>
+<span class="sd">    :type chain_mentions: list of basestring</span>
+
+<span class="sd">    :returns bool:</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">for</span> <span class="n">multi_token_name</span> <span class="ow">in</span> <span class="n">multi_token_target_mentions</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">ALL_mentions</span><span class="p">(</span><span class="n">multi_token_name</span><span class="o">.</span><span class="n">split</span><span class="p">(),</span> <span class="n">chain_mentions</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">True</span>
+    <span class="k">return</span> <span class="bp">False</span>
+
+
+<span class="k">def</span> <span class="nf">ANY_mentions</span><span class="p">(</span><span class="n">target_mentions</span><span class="p">,</span> <span class="n">chain_mentions</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    For each name string in the target_mentions list, searches through</span>
+<span class="sd">    all chain_mentions looking for any cleansed Token.token that</span>
+<span class="sd">    contains the name.  Returns True if any of the target_mention</span>
+<span class="sd">    strings appeared as substrings of any cleansed Token.token.</span>
+<span class="sd">    Otherwise, returns False.</span>
+
+<span class="sd">    :type target_mentions: list of basestring</span>
+<span class="sd">    :type chain_mentions: list of basestring</span>
+
+<span class="sd">    :returns bool:</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">target_mentions</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">chain_ment</span> <span class="ow">in</span> <span class="n">chain_mentions</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">chain_ment</span><span class="p">:</span>
+                <span class="k">return</span> <span class="bp">True</span>
+    <span class="k">return</span> <span class="bp">False</span>
+
+<span class="n">_CHAIN_SELECTORS</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+    <span class="n">ALL</span> <span class="o">=</span> <span class="n">ALL_mentions</span><span class="p">,</span>
+    <span class="n">ANY</span> <span class="o">=</span> <span class="n">ANY_mentions</span><span class="p">,</span>
+    <span class="n">ANY_MULTI_TOKEN</span> <span class="o">=</span> <span class="n">ANY_MULTI_TOKEN_mentions</span><span class="p">,</span>
+    <span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">names_in_chains</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Convert doc-level Rating object into a Label, and add that Label</span>
+<span class="sd">    to all Token in all coref chains identified by</span>
+<span class="sd">    aligner_data[&quot;chain_selector&quot;]</span>
+
+<span class="sd">    :param stream_item: document that has a doc-level Rating to translate into token-level Labels.</span>
+<span class="sd">    :param aligner_data: dict containing:</span>
+<span class="sd">      chain_selector: ALL or ANY</span>
+<span class="sd">      annotator_id: string to find at stream_item.Ratings[i].annotator.annotator_id</span>
+
+<span class="sd">    If chain_selector==ALL, then only apply Label to chains in which</span>
+<span class="sd">    all of the Rating.mentions strings appear as substrings within at</span>
+<span class="sd">    least one of the Token.token strings.</span>
+
+<span class="sd">    If chain_selector==ANY, then apply Label to chains in which any of</span>
+<span class="sd">    the Rating.mentions strings appear as a substring within at least</span>
+<span class="sd">    one of the Token.token strings.</span>
+
+<span class="sd">    If chain_selector==ANY_MULTI_TOKEN, then apply Label to chains in which all</span>
+<span class="sd">    the names in any of the Rating.mentions strings appear as a substring within at least</span>
+<span class="sd">    one of the Token.token strings.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">chain_selector</span> <span class="o">=</span> <span class="n">aligner_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;chain_selector&#39;</span><span class="p">,</span> <span class="s">&#39;&#39;</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="n">chain_selector</span> <span class="ow">in</span> <span class="n">_CHAIN_SELECTORS</span><span class="p">,</span> \
+        <span class="s">&#39;chain_selector: </span><span class="si">%r</span><span class="s"> not in </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">chain_selector</span><span class="p">,</span> <span class="n">_CHAIN_SELECTORS</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span>
+
+    <span class="c">## convert chain_selector to a function</span>
+    <span class="n">chain_selector</span> <span class="o">=</span> <span class="n">_CHAIN_SELECTORS</span><span class="p">[</span><span class="n">chain_selector</span><span class="p">]</span>
+
+    <span class="c">## make inverted index equiv_id --&gt; (names, tokens)</span>
+    <span class="n">equiv_ids</span> <span class="o">=</span> <span class="n">make_chains_with_names</span><span class="p">(</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span> <span class="p">)</span>
+
+    <span class="n">required_annotator_id</span> <span class="o">=</span> <span class="n">aligner_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;annotator_id&#39;</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">annotator_id</span><span class="p">,</span> <span class="n">ratings</span> <span class="ow">in</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">ratings</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">required_annotator_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">annotator_id</span> <span class="o">!=</span> <span class="n">required_annotator_id</span><span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">rating</span> <span class="ow">in</span> <span class="n">ratings</span><span class="p">:</span>
+                <span class="n">label</span> <span class="o">=</span> <span class="n">Label</span><span class="p">(</span><span class="n">annotator</span><span class="o">=</span><span class="n">rating</span><span class="o">.</span><span class="n">annotator</span><span class="p">,</span>
+                              <span class="n">target</span><span class="o">=</span><span class="n">rating</span><span class="o">.</span><span class="n">target</span><span class="p">)</span>
+
+                <span class="k">for</span> <span class="n">eqid</span><span class="p">,</span> <span class="p">(</span><span class="n">chain_mentions</span><span class="p">,</span> <span class="n">chain_tokens</span><span class="p">)</span> <span class="ow">in</span> <span class="n">equiv_ids</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                    <span class="k">if</span> <span class="n">chain_selector</span><span class="p">(</span><span class="n">rating</span><span class="o">.</span><span class="n">mentions</span><span class="p">,</span> <span class="n">chain_mentions</span><span class="p">):</span>
+                        <span class="c">## apply the label</span>
+                        <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">chain_tokens</span><span class="p">:</span>
+                            <span class="n">add_annotation</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+
+                <span class="c">## stream_item passed by reference, so nothing to return</span>
+
+<span class="k">def</span> <span class="nf">_get_tagger_id</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">):</span>
+    <span class="n">available_taggings</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">available_taggings</span><span class="p">)</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="n">default_tagger_id</span> <span class="o">=</span> <span class="n">available_taggings</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">default_tagger_id</span> <span class="o">=</span> <span class="bp">None</span>
+    <span class="n">tagger_id</span> <span class="o">=</span> <span class="n">aligner_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;tagger_id&#39;</span><span class="p">,</span> <span class="n">default_tagger_id</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">tagger_id</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;need tagger_id, available taggings: </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">available_taggings</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">tagger_id</span>
+
+
+<span class="k">def</span> <span class="nf">line_offset_labels</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">):</span>
+    <span class="c">## get a set of tokens -- must have OffsetType.LINES in them.</span>
+    <span class="n">tagger_id</span> <span class="o">=</span> <span class="n">_get_tagger_id</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">)</span>
+    <span class="n">sentences</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">tagger_id</span><span class="p">,</span> <span class="p">[])</span>
+
+    <span class="n">required_annotator_id</span> <span class="o">=</span> <span class="n">aligner_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;annotator_id&#39;</span><span class="p">)</span>
+
+    <span class="c">## if labels on ContentItem, then make labels on Tokens</span>
+    <span class="k">for</span> <span class="n">annotator_id</span> <span class="ow">in</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">labels</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">required_annotator_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">annotator_id</span> <span class="o">!=</span> <span class="n">required_annotator_id</span><span class="p">):</span>
+            <span class="k">continue</span>
+        <span class="k">for</span> <span class="n">label</span> <span class="ow">in</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="n">annotator_id</span><span class="p">]:</span>
+
+            <span class="c">## remove the offset from the label, because we are</span>
+            <span class="c">## putting it into the token</span>
+            <span class="n">label_off</span> <span class="o">=</span> <span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">LINES</span><span class="p">)</span>
+
+            <span class="k">assert</span> <span class="n">label_off</span><span class="o">.</span><span class="n">length</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">label_off</span><span class="o">.</span><span class="n">value</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="p">))</span>
+            <span class="c">#print &#39;L: %d\t%r\t%r&#39; % (label_off.first, label_off.value,</span>
+            <span class="c">#    &#39;\n&#39;.join(hope_original.split(&#39;\n&#39;)[label_off.first:</span>
+            <span class="c">#         label_off.first+label_off.length]))</span>
+
+            <span class="c">## These next few steps are probably the most</span>
+            <span class="c">## memory intensive, because they fully</span>
+            <span class="c">## instantiate all the tokens.</span>
+            <span class="n">token_collection</span> <span class="o">=</span> <span class="n">SortedCollection</span><span class="p">(</span>
+                <span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">sent</span><span class="o">.</span><span class="n">tokens</span> <span class="k">for</span> <span class="n">sent</span> <span class="ow">in</span> <span class="n">sentences</span><span class="p">]),</span>
+                <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tok</span><span class="p">:</span> <span class="n">tok</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">LINES</span><span class="p">]</span><span class="o">.</span><span class="n">first</span>
+                <span class="p">)</span>
+
+            <span class="n">toks</span> <span class="o">=</span> <span class="n">token_collection</span><span class="o">.</span><span class="n">find_range</span><span class="p">(</span>
+                    <span class="n">label_off</span><span class="o">.</span><span class="n">first</span><span class="p">,</span> <span class="n">label_off</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">label_off</span><span class="o">.</span><span class="n">length</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">toks</span><span class="p">:</span>
+                <span class="n">add_annotation</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+
+                <span class="c">## only for debugging</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">tok</span><span class="o">.</span><span class="n">token</span> <span class="ow">or</span> <span class="n">tok</span><span class="o">.</span><span class="n">token</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">label_off</span><span class="o">.</span><span class="n">value</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="n">InvalidStreamItem</span><span class="p">(</span>
+                        <span class="s">&#39;</span><span class="si">%r</span><span class="s"> not in </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span>
+                        <span class="p">([(</span><span class="n">t</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">LINES</span><span class="p">]</span><span class="o">.</span><span class="n">first</span><span class="p">,</span> <span class="n">t</span><span class="o">.</span><span class="n">token</span><span class="p">)</span>
+                          <span class="k">for</span> <span class="n">t</span> <span class="ow">in</span> <span class="n">toks</span><span class="p">],</span>
+                         <span class="n">label_off</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+
+<span class="k">def</span> <span class="nf">byte_offset_labels</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">):</span>
+    <span class="n">_offset_labels</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">,</span> <span class="n">offset_type</span><span class="o">=</span><span class="s">&#39;BYTES&#39;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">char_offset_labels</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">):</span>
+    <span class="n">_offset_labels</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">,</span> <span class="n">offset_type</span><span class="o">=</span><span class="s">&#39;CHARS&#39;</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">_offset_labels</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">,</span> <span class="n">offset_type</span><span class="o">=</span><span class="s">&#39;BYTES&#39;</span><span class="p">):</span>
+    <span class="c">## get a set of tokens -- must have OffsetType.&lt;offset_type&gt; type offsets.</span>
+
+    <span class="n">otype_str</span> <span class="o">=</span> <span class="n">offset_type</span>
+    <span class="n">offset_type</span> <span class="o">=</span> <span class="n">OffsetType</span><span class="o">.</span><span class="n">_NAMES_TO_VALUES</span><span class="p">[</span><span class="n">offset_type</span><span class="p">]</span>
+
+    <span class="n">tagger_id</span> <span class="o">=</span> <span class="n">_get_tagger_id</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">)</span>
+    <span class="n">sentences</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">tagger_id</span><span class="p">,</span> <span class="p">[])</span>
+
+    <span class="c">## These next few steps are probably the most</span>
+    <span class="c">## memory intensive, because they fully</span>
+    <span class="c">## instantiate all the tokens.</span>
+
+    <span class="n">token_collection</span> <span class="o">=</span> <span class="n">SortedCollection</span><span class="p">(</span>
+        <span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">sent</span><span class="o">.</span><span class="n">tokens</span> <span class="k">for</span> <span class="n">sent</span> <span class="ow">in</span> <span class="n">sentences</span><span class="p">]),</span>
+        <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">tok</span><span class="p">:</span> <span class="n">tok</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">offset_type</span><span class="p">]</span><span class="o">.</span><span class="n">first</span>
+        <span class="p">)</span>
+
+    <span class="n">required_annotator_id</span> <span class="o">=</span> <span class="n">aligner_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;annotator_id&#39;</span><span class="p">)</span>
+
+    <span class="c">## if labels on ContentItem, then make labels on Tokens</span>
+    <span class="k">for</span> <span class="n">annotator_id</span> <span class="ow">in</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">labels</span><span class="p">:</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">required_annotator_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="n">annotator_id</span> <span class="o">!=</span> <span class="n">aligner_data</span><span class="p">[</span><span class="s">&#39;annotator_id&#39;</span><span class="p">]):</span>
+            <span class="k">continue</span>
+        <span class="k">for</span> <span class="n">label</span> <span class="ow">in</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="n">annotator_id</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">offset_type</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="p">:</span>
+                <span class="c"># This was causing a very small number of jobs to fail in</span>
+                <span class="c"># the WLC dataset. Namely, the expected offset type did not</span>
+                <span class="c"># exist in `label.offsets`. (There was a byte offset but not</span>
+                <span class="c"># a char offset, even though the `char_offset_align_labels`</span>
+                <span class="c"># was used.) I don&#39;t understand enough about the system</span>
+                <span class="c"># to know why the expected offset type didn&#39;t exist, but it was</span>
+                <span class="c"># happening in few enough cases that I did feel comfortable</span>
+                <span class="c"># just ignoring it.</span>
+                <span class="c"># ---AG</span>
+                <span class="n">found_types</span> <span class="o">=</span> <span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">_VALUES_TO_NAMES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="s">&#39;???&#39;</span><span class="p">)</span>
+                               <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="o">.</span><span class="n">keys</span><span class="p">()]</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;Could not find offset type &quot;</span><span class="si">%s</span><span class="s">&quot; in label &#39;</span>
+                            <span class="s">&#39;offsets. Found </span><span class="si">%s</span><span class="s"> types in stream item </span><span class="si">%r</span><span class="s">&#39;</span>
+                            <span class="o">%</span> <span class="p">(</span><span class="n">otype_str</span><span class="p">,</span> <span class="n">found_types</span><span class="p">,</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">))</span>
+                <span class="k">continue</span>
+
+            <span class="c">## remove the offset from the label, because we are</span>
+            <span class="c">## putting it into the token</span>
+            <span class="n">label_off</span> <span class="o">=</span> <span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span> <span class="n">offset_type</span> <span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">offset_type</span> <span class="o">==</span> <span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="n">label_off</span><span class="o">.</span><span class="n">length</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">label_off</span><span class="o">.</span><span class="n">value</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)),</span> <span class="p">(</span><span class="n">label_off</span><span class="o">.</span><span class="n">length</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">label_off</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c">## had better by BYTES</span>
+                <span class="k">assert</span> <span class="n">label_off</span><span class="o">.</span><span class="n">length</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">label_off</span><span class="o">.</span><span class="n">value</span><span class="p">),</span> <span class="p">(</span><span class="n">label_off</span><span class="o">.</span><span class="n">length</span><span class="p">,</span> <span class="nb">repr</span><span class="p">(</span><span class="n">label_off</span><span class="o">.</span><span class="n">value</span><span class="p">))</span>
+
+            <span class="c">#print &#39;L: %d\t%r\t%r&#39; % (label_off.first, label_off.value,</span>
+            <span class="c">#                         &#39;\n&#39;.join(hope_original.split(&#39;\n&#39;)[label_off.first:label_off.first+label_off.length]))</span>
+
+            <span class="c">#print &#39;tc %d %r&#39; % (len(token_collection), token_collection._keys)</span>
+            <span class="c">#print &#39;label_off.first=%d, length=%d, value=%r&#39; % (label_off.first, label_off.length, label_off.value)</span>
+
+            <span class="n">toks</span> <span class="o">=</span> <span class="n">token_collection</span><span class="o">.</span><span class="n">find_range</span><span class="p">(</span>
+                    <span class="n">label_off</span><span class="o">.</span><span class="n">first</span><span class="p">,</span> <span class="n">label_off</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">label_off</span><span class="o">.</span><span class="n">length</span><span class="p">)</span>
+
+            <span class="c">#print &quot;find_le: &quot;, token_collection.find_le(label_off.first)</span>
+
+            <span class="n">toks</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">toks</span><span class="p">)</span>
+            <span class="c">#print &#39;aligned tokens&#39;, toks</span>
+
+            <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">toks</span><span class="p">:</span>
+                <span class="n">add_annotation</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+
+                <span class="c">## only for debugging</span>
+                <span class="k">assert</span> <span class="n">tok</span><span class="o">.</span><span class="n">token</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">,</span> <span class="n">tok</span><span class="o">.</span><span class="n">token</span>
+
+                <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">                Cannot do the check below, because Serif actually *changes* the characters that it puts in Token.token....</span>
+<span class="sd">                InvalidStreamItem: [(55701, &#39;2002&#39;), (55706, &#39;coup&#39;), (55711, &quot;d&#39;etat&quot;)] not in &#39;2002 coup d\xe2\x80\x99etat&#39;</span>
+
+<span class="sd">                if tok.token not in label_off.value and \</span>
+<span class="sd">                   cleanse(tok.token.decode(&#39;utf8&#39;)) not in \</span>
+<span class="sd">                   cleanse(label_off.value.decode(&#39;utf8&#39;)):</span>
+<span class="sd">                    raise InvalidStreamItem(</span>
+<span class="sd">                        &#39;%r not in %r&#39; %</span>
+<span class="sd">                        ([(t.offsets[offset_type].first, t.token)</span>
+<span class="sd">                          for t in toks],</span>
+<span class="sd">                         label_off.value))</span>
+<span class="sd">                &#39;&#39;&#39;</span>
+
+
+<span class="k">def</span> <span class="nf">look_ahead_match</span><span class="p">(</span><span class="n">rating</span><span class="p">,</span> <span class="n">tokens</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;iterate through all tokens looking for matches of cleansed tokens</span>
+<span class="sd">    or token regexes, skipping tokens left empty by cleansing and</span>
+<span class="sd">    coping with Token objects that produce multiple space-separated</span>
+<span class="sd">    strings when cleansed.  Yields tokens that match.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="c">## this ensures that all cleansed tokens are non-zero length</span>
+    <span class="n">all_mregexes</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">rating</span><span class="o">.</span><span class="n">mentions</span><span class="p">:</span>
+        <span class="n">mregexes</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">mpatterns</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39; &#39;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">mpat</span> <span class="ow">in</span> <span class="n">mpatterns</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">mpat</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s">&#39;ur&quot;^&#39;</span><span class="p">)</span> <span class="ow">and</span> <span class="n">mpat</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;$&quot;&#39;</span><span class="p">):</span> <span class="c"># is not regex</span>
+                <span class="c">## chop out the meat of the regex so we can reconstitute it below</span>
+                <span class="n">mpat</span> <span class="o">=</span> <span class="n">mpat</span><span class="p">[</span><span class="mi">4</span><span class="p">:</span><span class="o">-</span><span class="mi">2</span><span class="p">]</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">mpat</span> <span class="o">=</span> <span class="n">cleanse</span><span class="p">(</span><span class="n">mpat</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mpat</span><span class="p">:</span>
+                <span class="c">## make a unicode raw string</span>
+                <span class="c">## https://docs.python.org/2/reference/lexical_analysis.html#string-literals</span>
+                <span class="n">mpat</span> <span class="o">=</span> <span class="s">ur&#39;^</span><span class="si">%s</span><span class="s">$&#39;</span> <span class="o">%</span> <span class="n">mpat</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;look_ahead_match compiling regex: </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">mpat</span><span class="p">)</span>
+                <span class="n">mregexes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="n">mpat</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">UNICODE</span> <span class="o">|</span> <span class="n">re</span><span class="o">.</span><span class="n">IGNORECASE</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">mregexes</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;got empty cleansed mention: </span><span class="si">%r</span><span class="se">\n</span><span class="s">rating=</span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="n">rating</span><span class="p">))</span>
+
+        <span class="n">all_mregexes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">mregexes</span><span class="p">)</span>
+
+    <span class="c">## now that we have all_mregexes, go through all the tokens</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">)):</span>
+        <span class="k">for</span> <span class="n">mregexes</span> <span class="ow">in</span> <span class="n">all_mregexes</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">mregexes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">tokens</span><span class="p">[</span><span class="n">i</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="mi">0</span><span class="p">]):</span>
+                <span class="c">## found the start of a possible match, so iterate</span>
+                <span class="c">## through the tuples of cleansed strings for each</span>
+                <span class="c">## Token while stepping through the cleansed strings</span>
+                <span class="c">## for this mention.</span>
+                <span class="n">m_j</span> <span class="o">=</span> <span class="mi">1</span>
+                <span class="n">i_j</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">last_token_matched</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">matched</span> <span class="o">=</span> <span class="bp">True</span>
+                <span class="k">while</span> <span class="n">m_j</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">mregexes</span><span class="p">):</span>
+                    <span class="n">i_j</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="k">if</span> <span class="n">i_j</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="n">last_token_matched</span><span class="p">][</span><span class="mi">0</span><span class="p">]):</span>
+                        <span class="n">i_j</span> <span class="o">=</span> <span class="mi">0</span>
+                        <span class="n">last_token_matched</span> <span class="o">+=</span> <span class="mi">1</span>
+                        <span class="k">if</span> <span class="n">i</span> <span class="o">+</span> <span class="n">last_token_matched</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">tokens</span><span class="p">):</span>
+                            <span class="n">matched</span> <span class="o">=</span> <span class="bp">False</span>
+                            <span class="k">break</span>
+                    <span class="n">target_token</span> <span class="o">=</span> <span class="n">tokens</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="n">last_token_matched</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="n">i_j</span><span class="p">]</span>
+                    <span class="c">## this next line is the actual string comparison</span>
+                    <span class="k">if</span> <span class="n">mregexes</span><span class="p">[</span><span class="n">m_j</span><span class="p">]</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">target_token</span><span class="p">):</span>
+                        <span class="n">m_j</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="k">elif</span> <span class="n">target_token</span> <span class="o">==</span> <span class="s">&#39;&#39;</span><span class="p">:</span>
+                        <span class="k">continue</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">matched</span> <span class="o">=</span> <span class="bp">False</span>
+                        <span class="k">break</span>
+                <span class="k">if</span> <span class="n">matched</span><span class="p">:</span>
+                    <span class="c">## yield each matched token only once</span>
+                    <span class="n">toks</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+                    <span class="k">for</span> <span class="n">j</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="n">last_token_matched</span> <span class="o">+</span> <span class="mi">1</span><span class="p">):</span>
+                        <span class="n">toks</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">tokens</span><span class="p">[</span><span class="n">i</span> <span class="o">+</span> <span class="n">j</span><span class="p">][</span><span class="mi">1</span><span class="p">])</span>
+                    <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">toks</span><span class="p">:</span>
+                        <span class="k">yield</span> <span class="n">tok</span>
+
+<span class="k">def</span> <span class="nf">multi_token_match</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    iterate through tokens looking for near-exact matches to strings</span>
+<span class="sd">    in si.ratings...mentions</span>
+<span class="sd">    &#39;&#39;&#39;</span>    
+    <span class="n">tagger_id</span> <span class="o">=</span> <span class="n">_get_tagger_id</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">)</span>
+    <span class="n">sentences</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">tagger_id</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">sentences</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="c">## construct a list of tuples, where the first part of each tuple</span>
+    <span class="c">## is a tuple of cleansed strings, and the second part is the</span>
+    <span class="c">## Token object from which it came.</span>
+    <span class="n">tokens</span> <span class="o">=</span> <span class="nb">map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">tok</span><span class="p">:</span> <span class="p">(</span><span class="n">cleanse</span><span class="p">(</span><span class="n">tok</span><span class="o">.</span><span class="n">token</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">))</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39; &#39;</span><span class="p">),</span> <span class="n">tok</span><span class="p">),</span> 
+                 <span class="n">itertools</span><span class="o">.</span><span class="n">chain</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="n">sent</span><span class="o">.</span><span class="n">tokens</span> <span class="k">for</span> <span class="n">sent</span> <span class="ow">in</span> <span class="n">sentences</span><span class="p">]))</span>    
+    <span class="n">required_annotator_id</span> <span class="o">=</span> <span class="n">aligner_data</span><span class="p">[</span><span class="s">&#39;annotator_id&#39;</span><span class="p">]</span>
+    <span class="k">for</span> <span class="n">annotator_id</span><span class="p">,</span> <span class="n">ratings</span> <span class="ow">in</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">ratings</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="p">(</span><span class="n">required_annotator_id</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">annotator_id</span> <span class="o">==</span> <span class="n">required_annotator_id</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">rating</span> <span class="ow">in</span> <span class="n">ratings</span><span class="p">:</span>
+                <span class="n">label</span> <span class="o">=</span> <span class="n">Label</span><span class="p">(</span><span class="n">annotator</span><span class="o">=</span><span class="n">rating</span><span class="o">.</span><span class="n">annotator</span><span class="p">,</span>
+                              <span class="n">target</span><span class="o">=</span><span class="n">rating</span><span class="o">.</span><span class="n">target</span><span class="p">)</span>
+                
+                <span class="n">num_tokens_matched</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">look_ahead_match</span><span class="p">(</span><span class="n">rating</span><span class="p">,</span> <span class="n">tokens</span><span class="p">):</span>
+                    <span class="k">if</span> <span class="n">aligner_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;update_labels&#39;</span><span class="p">):</span>
+                        <span class="n">tok</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">annotator_id</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+                    <span class="n">add_annotation</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+                    <span class="n">num_tokens_matched</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                <span class="k">if</span> <span class="n">num_tokens_matched</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&#39;multi_token_match didn</span><span class="se">\&#39;</span><span class="s">t actually match &#39;</span>
+                                   <span class="s">&#39;entity </span><span class="si">%r</span><span class="s"> in stream_id </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                                   <span class="n">rating</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">target_id</span><span class="p">,</span>
+                                   <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;matched </span><span class="si">%d</span><span class="s"> tokens for </span><span class="si">%r</span><span class="s"> in </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                                 <span class="n">num_tokens_matched</span><span class="p">,</span> <span class="n">rating</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">target_id</span><span class="p">,</span>
+                                 <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+
+                <span class="c">## stream_item passed by reference, so nothing to return</span>
+
+
+<span class="k">def</span> <span class="nf">make_memory_info_msg</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+    <span class="n">msg</span> <span class="o">=</span> <span class="s">&#39;reporting memory while running on:</span><span class="se">\n</span><span class="si">%r</span><span class="se">\n</span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">clean_visible_path</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="p">)</span>
+    <span class="n">msg</span> <span class="o">+=</span> <span class="s">&#39;VmSize: </span><span class="si">%d</span><span class="s"> bytes&#39;</span> <span class="o">%</span> <span class="n">_memory</span><span class="o">.</span><span class="n">memory</span><span class="p">()</span>
+    <span class="n">msg</span> <span class="o">+=</span> <span class="s">&#39;VmRSS:  </span><span class="si">%d</span><span class="s"> bytes&#39;</span> <span class="o">%</span> <span class="n">_memory</span><span class="o">.</span><span class="n">resident</span><span class="p">()</span>
+    <span class="n">msg</span> <span class="o">+=</span> <span class="s">&#39;VmStk:  </span><span class="si">%d</span><span class="s"> bytes&#39;</span> <span class="o">%</span> <span class="n">_memory</span><span class="o">.</span><span class="n">stacksize</span><span class="p">()</span>
+    <span class="n">msg</span> <span class="o">+=</span> <span class="s">&#39;uncollectable garbage: </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">gc</span><span class="o">.</span><span class="n">garbage</span>
+    <span class="n">msg</span> <span class="o">+=</span> <span class="s">&#39;gc.get_count() = </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="nb">repr</span><span class="p">(</span><span class="n">gc</span><span class="o">.</span><span class="n">get_count</span><span class="p">())</span>
+    <span class="c">## Do not do gc.get_objects, because it causes nltk to</span>
+    <span class="c">## load stuff that is not actually in memory yet!</span>
+    <span class="c">#msg += &#39;current objects: %r&#39; % gc.get_objects()</span>
+    <span class="k">return</span> <span class="n">msg</span>
+
+<span class="n">AlignmentStrategies</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;names_in_chains&#39;</span><span class="p">:</span> <span class="n">names_in_chains</span><span class="p">,</span>
+    <span class="c">#&#39;line_offset_labels&#39;: line_offset_labels,</span>
+    <span class="s">&#39;byte_offset_labels&#39;</span><span class="p">:</span> <span class="n">byte_offset_labels</span><span class="p">,</span>
+    <span class="s">&#39;char_offset_labels&#39;</span><span class="p">:</span> <span class="n">char_offset_labels</span><span class="p">,</span>
+    <span class="s">&#39;multi_token_match&#39;</span><span class="p">:</span> <span class="n">multi_token_match</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="k">def</span> <span class="nf">align_labels</span><span class="p">(</span><span class="n">t_path1</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="s">&#39;align_labels_by&#39;</span> <span class="ow">in</span> <span class="n">config</span> <span class="ow">and</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;align_labels_by&#39;</span><span class="p">]):</span>
+        <span class="k">return</span>
+    <span class="k">assert</span> <span class="s">&#39;aligner_data&#39;</span> <span class="ow">in</span> <span class="n">config</span><span class="p">,</span> <span class="s">&#39;config missing &quot;aligner_data&quot;&#39;</span>
+    <span class="n">aligner</span> <span class="o">=</span> <span class="n">AlignmentStrategies</span><span class="p">[</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;align_labels_by&#39;</span><span class="p">]</span> <span class="p">]</span>
+    <span class="n">_aligner_core</span><span class="p">(</span><span class="n">t_path1</span><span class="p">,</span> <span class="n">aligner</span><span class="p">,</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;aligner_data&#39;</span><span class="p">])</span>
+
+<span class="k">def</span> <span class="nf">_aligner_core</span><span class="p">(</span><span class="n">t_path1</span><span class="p">,</span> <span class="n">aligner</span><span class="p">,</span> <span class="n">aligner_data</span><span class="p">):</span>
+    <span class="n">t_chunk1</span> <span class="o">=</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">t_path1</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;rb&#39;</span><span class="p">)</span>
+    <span class="n">t_path2</span> <span class="o">=</span> <span class="n">t_path1</span> <span class="o">+</span> <span class="s">&#39;-tmp-aligning&#39;</span>
+    <span class="n">t_chunk2</span> <span class="o">=</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;wb&#39;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">t_chunk1</span><span class="p">:</span>
+        <span class="n">aligner</span><span class="p">(</span> <span class="n">si</span><span class="p">,</span> <span class="n">aligner_data</span> <span class="p">)</span>
+        <span class="n">t_chunk2</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+    <span class="n">t_chunk1</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="n">t_chunk2</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">aligner_data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">,</span> <span class="bp">True</span><span class="p">):</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">t_path1</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="c"># for development, leave intermediate tmp file</span>
+        <span class="n">shutil</span><span class="o">.</span><span class="n">copy</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">t_path1</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">_aligner_batch_transform</span><span class="p">(</span><span class="n">streamcorpus_pipeline</span><span class="o">.</span><span class="n">stages</span><span class="o">.</span><span class="n">BatchTransform</span><span class="p">,</span> <span class="n">streamcorpus_pipeline</span><span class="o">.</span><span class="n">stages</span><span class="o">.</span><span class="n">IncrementalTransform</span><span class="p">):</span>
+    <span class="c"># aligner needs to be a single element tuple containing a function pointer,</span>
+    <span class="c"># because otherwise a function pointer assigned at class definition scope becomes</span>
+    <span class="c"># &quot;bound&quot; to the class and will be called with a suprious first &#39;self&#39; argument.</span>
+    <span class="n">aligner</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">def</span> <span class="nf">process_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chunk_path</span><span class="p">):</span>
+        <span class="c"># implement BatchTransform</span>
+        <span class="n">_aligner_core</span><span class="p">(</span><span class="n">chunk_path</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">aligner</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream_item</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="c"># implement IncrementalTransform</span>
+        <span class="n">aligner</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">aligner</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">aligner</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">stream_item</span>
+
+    <span class="k">def</span> <span class="nf">shutdown</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+
+<div class="viewcode-block" id="name_align_labels"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._taggers.name_align_labels">[docs]</a><span class="k">class</span> <span class="nc">name_align_labels</span><span class="p">(</span><span class="n">_aligner_batch_transform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    requires config[&#39;chain_selector&#39;] = ALL | ANY</span>
+<span class="sd">    requires config[&#39;annotator_id&#39;] (which person/org did manual labelling)</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;name_align_labels&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;chain_selector&#39;</span><span class="p">:</span> <span class="s">&#39;ALL&#39;</span>
+    <span class="p">}</span>
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="k">if</span> <span class="s">&#39;chain_selector&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">config</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span><span class="s">&#39;{0} requires chain_selector&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;chain_selector&#39;</span><span class="p">]</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_CHAIN_SELECTORS</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span><span class="s">&#39;chain_selector must be one of: {0!r}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">_CHAIN_SELECTORS</span><span class="o">.</span><span class="n">keys</span><span class="p">()))</span>
+    <span class="n">aligner</span> <span class="o">=</span> <span class="p">(</span><span class="n">names_in_chains</span><span class="p">,)</span>
+</div>
+<div class="viewcode-block" id="line_offset_align_labels"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._taggers.line_offset_align_labels">[docs]</a><span class="k">class</span> <span class="nc">line_offset_align_labels</span><span class="p">(</span><span class="n">_aligner_batch_transform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    requires config[&#39;annotator_id&#39;] (which person/org did manual labelling)</span>
+<span class="sd">    requires config[&#39;tagger_id&#39;] (which software did tagging to process)</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;line_offset_align_labels&#39;</span>
+    <span class="n">aligner</span> <span class="o">=</span> <span class="p">(</span><span class="n">line_offset_labels</span><span class="p">,)</span>
+</div>
+<div class="viewcode-block" id="byte_offset_align_labels"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._taggers.byte_offset_align_labels">[docs]</a><span class="k">class</span> <span class="nc">byte_offset_align_labels</span><span class="p">(</span><span class="n">_aligner_batch_transform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    requires config[&#39;annotator_id&#39;] (which person/org did manual labelling)</span>
+<span class="sd">    requires config[&#39;tagger_id&#39;] (which software did tagging to process)</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;byte_offset_align_labels&#39;</span>
+    <span class="n">aligner</span> <span class="o">=</span> <span class="p">(</span><span class="n">byte_offset_labels</span><span class="p">,)</span>
+</div>
+<span class="k">class</span> <span class="nc">char_offset_align_labels</span><span class="p">(</span><span class="n">_aligner_batch_transform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    requires config[&#39;annotator_id&#39;] (which person/org did manual labelling)</span>
+<span class="sd">    requires config[&#39;tagger_id&#39;] (which software did tagging to process)</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;char_offset_align_labels&#39;</span>
+    <span class="n">aligner</span> <span class="o">=</span> <span class="p">(</span><span class="n">char_offset_labels</span><span class="p">,)</span>
+
+<span class="k">class</span> <span class="nc">multi_token_match_align_labels</span><span class="p">(</span><span class="n">_aligner_batch_transform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    requires config[&#39;annotator_id&#39;] (which person/org did manual labelling)</span>
+<span class="sd">    requires config[&#39;tagger_id&#39;] (which software did tagging to process)</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;multi_token_match_align_labels&#39;</span>
+    <span class="n">aligner</span> <span class="o">=</span> <span class="p">(</span><span class="n">multi_token_match</span><span class="p">,)</span>
+
+
+<span class="k">class</span> <span class="nc">TaggerBatchTransform</span><span class="p">(</span><span class="n">streamcorpus_pipeline</span><span class="o">.</span><span class="n">stages</span><span class="o">.</span><span class="n">BatchTransform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    streamcorpus.pipeline.TaggerBatchTransform provides a structure for</span>
+<span class="sd">    aligning a taggers output with labels and generating</span>
+<span class="sd">    stream_item.sentences[tagger_id] = [Sentence]</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">template</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">TaggerBatchTransform</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_child</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tagger_root_path&#39;</span><span class="p">]</span> <span class="o">=</span> \
+            <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;third_dir_path&#39;</span><span class="p">],</span> 
+                         <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;path_in_third&#39;</span><span class="p">])</span>
+
+    <span class="k">def</span> <span class="nf">process_path</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chunk_path</span><span class="p">):</span>
+        <span class="c">## make temporary file paths based on chunk_path</span>
+        <span class="n">clean_visible_path</span> <span class="o">=</span> <span class="n">chunk_path</span> <span class="o">+</span> <span class="s">&#39;-clean_visible.xml&#39;</span>
+        <span class="n">ner_xml_path</span>       <span class="o">=</span> <span class="n">chunk_path</span> <span class="o">+</span> <span class="s">&#39;-ner.xml&#39;</span>
+
+        <span class="c">## process the chunk&#39;s clean_visible data into xml</span>
+        <span class="n">i_chunk</span> <span class="o">=</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">chunk_path</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;rb&#39;</span><span class="p">)</span>
+        <span class="n">make_clean_visible_file</span><span class="p">(</span><span class="n">i_chunk</span><span class="p">,</span> <span class="n">clean_visible_path</span><span class="p">)</span>
+
+        <span class="c">## make sure holding nothing that consumes memory</span>
+        <span class="n">i_chunk</span> <span class="o">=</span> <span class="bp">None</span>
+
+        <span class="c">## generate an output file from the tagger</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">make_ner_file</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="p">)</span>
+
+        <span class="c">## make a new output chunk at a temporary path</span>
+        <span class="n">tmp_chunk_path</span>     <span class="o">=</span> <span class="n">chunk_path</span> <span class="o">+</span> <span class="s">&#39;_&#39;</span>
+        <span class="n">o_chunk</span> <span class="o">=</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">tmp_chunk_path</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;wb&#39;</span><span class="p">)</span>
+
+        <span class="c">## re-open i_chunk</span>
+        <span class="n">i_chunk</span> <span class="o">=</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">chunk_path</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;rb&#39;</span><span class="p">)</span>
+
+        <span class="c">## fuse the output file with i_chunk to make o_chunk</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">align_chunk_with_ner</span><span class="p">(</span><span class="n">ner_xml_path</span><span class="p">,</span> <span class="n">i_chunk</span><span class="p">,</span> <span class="n">o_chunk</span><span class="p">)</span>
+
+        <span class="c">## clean up temp files</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">]:</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="p">)</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">ner_xml_path</span><span class="p">)</span>
+
+        <span class="c">## atomic rename new chunk file into place</span>
+        <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">tmp_chunk_path</span><span class="p">,</span> <span class="n">chunk_path</span><span class="p">)</span>
+
+    <span class="c">## gets called by self.__call__</span>
+    <span class="k">def</span> <span class="nf">make_ner_file</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">clean_visible_path</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;run tagger a child process to get XML output&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">template</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">exceptions</span><span class="o">.</span><span class="n">NotImplementedError</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">Subclasses must specify a class property &quot;template&quot; that provides</span>
+<span class="s">command string format for running a tagger.  It should take</span>
+<span class="si">%(tagger_root_path)s</span><span class="s"> as the path from the config file,</span>
+<span class="si">%(clean_visible_path)s</span><span class="s"> as the input XML file, and </span><span class="si">%(ner_xml_path)s</span><span class="s"> as</span>
+<span class="s">the output path to create.</span>
+<span class="s">&#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">tagger_config</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+            <span class="n">tagger_root_path</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tagger_root_path&#39;</span><span class="p">],</span>
+            <span class="n">clean_visible_path</span><span class="o">=</span><span class="n">clean_visible_path</span><span class="p">,</span>
+            <span class="n">ner_xml_path</span><span class="o">=</span><span class="n">ner_xml_path</span><span class="p">)</span>
+        <span class="c">## get a java_heap_size or default to 1GB</span>
+        <span class="n">tagger_config</span><span class="p">[</span><span class="s">&#39;java_heap_size&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;java_heap_size&#39;</span><span class="p">,</span> <span class="s">&#39;&#39;</span><span class="p">)</span>
+        <span class="n">cmd</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">template</span> <span class="o">%</span> <span class="n">tagger_config</span>
+        <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="c">## make sure we are using as little memory as possible</span>
+        <span class="n">gc</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_child</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">stderr</span><span class="o">=</span><span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">,</span> <span class="n">shell</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+            <span class="n">msg</span> <span class="o">+=</span> <span class="n">make_memory_info_msg</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="n">PipelineOutOfMemory</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+
+        <span class="n">s_out</span><span class="p">,</span> <span class="n">errors</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">communicate</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s">&#39;java.lang.OutOfMemoryError&#39;</span> <span class="ow">in</span> <span class="n">errors</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="n">errors</span> <span class="o">+</span> <span class="n">make_memory_info_msg</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="p">)</span>
+                <span class="k">raise</span> <span class="n">PipelineOutOfMemory</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">137</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="s">&#39;tagger returncode = 137</span><span class="se">\n</span><span class="s">&#39;</span> <span class="o">+</span> <span class="n">errors</span>
+                <span class="n">msg</span> <span class="o">+=</span> <span class="n">make_memory_info_msg</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="p">)</span>
+                <span class="c"># maybe get a tail of /var/log/messages</span>
+                <span class="k">raise</span> <span class="n">PipelineOutOfMemory</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="s">&#39;Exception&#39;</span> <span class="ow">in</span> <span class="n">errors</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">PipelineBaseException</span><span class="p">(</span><span class="n">errors</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">PipelineBaseException</span><span class="p">(</span><span class="s">&#39;tagger exited with </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">returncode</span><span class="p">)</span>
+
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;finished tagging in </span><span class="si">%.1f</span><span class="s"> seconds&#39;</span> <span class="o">%</span> <span class="n">elapsed</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">elapsed</span>
+
+        <span class="c">#print &#39;%.1f sec --&gt; %.1f StreamItems/second&#39; % (elapsed, rate)</span>
+
+    <span class="c">## gets called by self.__call__</span>
+    <span class="k">def</span> <span class="nf">align_chunk_with_ner</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ner_xml_path</span><span class="p">,</span> <span class="n">i_chunk</span><span class="p">,</span> <span class="n">o_chunk</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39; iterate through ner_xml_path to fuse with i_chunk into o_chunk &#39;&#39;&#39;</span>
+        <span class="c">## prepare to iterate over the input chunk</span>
+        <span class="n">input_iter</span> <span class="o">=</span> <span class="n">i_chunk</span><span class="o">.</span><span class="n">__iter__</span><span class="p">()</span>
+
+        <span class="n">all_ner</span> <span class="o">=</span> <span class="n">xml</span><span class="o">.</span><span class="n">dom</span><span class="o">.</span><span class="n">minidom</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="n">ner_xml_path</span><span class="p">))</span>
+
+        <span class="c">## this converts our UTF-8 data into unicode strings, so when</span>
+        <span class="c">## we want to compute byte offsets or construct tokens, we</span>
+        <span class="c">## must .encode(&#39;utf8&#39;)</span>
+        <span class="k">for</span> <span class="n">ner_dom</span> <span class="ow">in</span> <span class="n">all_ner</span><span class="o">.</span><span class="n">getElementsByTagName</span><span class="p">(</span><span class="s">&#39;FILENAME&#39;</span><span class="p">):</span>
+        <span class="c">#for stream_id, raw_ner in files(open(ner_xml_path).read().decode(&#39;utf8&#39;)):</span>
+
+            <span class="n">stream_item</span> <span class="o">=</span> <span class="n">input_iter</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
+
+            <span class="c">## get stream_id out of the XML</span>
+            <span class="n">stream_id</span> <span class="o">=</span> <span class="n">ner_dom</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;stream_id&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+            <span class="k">if</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="ow">not</span> <span class="n">stream_id</span><span class="p">,</span> <span class="s">&#39;out of sync: None != </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">stream_id</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;si.stream_id is None... ignoring&#39;</span><span class="p">)</span>
+                <span class="k">continue</span>
+            <span class="k">assert</span> <span class="n">stream_id</span> <span class="ow">and</span> <span class="n">stream_id</span> <span class="o">==</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> \
+                <span class="s">&#39;</span><span class="si">%s</span><span class="s"> != </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="p">:</span>
+                <span class="c">## the XML better have had an empty clean_visible too...</span>
+                <span class="c">#assert not ner_dom....something</span>
+                <span class="k">continue</span>
+
+            <span class="n">tagging</span> <span class="o">=</span> <span class="n">Tagging</span><span class="p">()</span>
+            <span class="n">tagging</span><span class="o">.</span><span class="n">tagger_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tagger_id</span>  <span class="c"># pylint: disable=E1101</span>
+
+            <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">            ## get this one file out of its FILENAME tags</span>
+<span class="sd">            tagged_doc_parts = list(files(ner_dom.toxml()))</span>
+<span class="sd">            if not tagged_doc_parts:</span>
+<span class="sd">                continue</span>
+
+<span class="sd">            tagged_doc = tagged_doc_parts[0][1]</span>
+
+<span class="sd">            ## hack</span>
+<span class="sd">            hope_original = make_clean_visible(tagged_doc, &#39;&#39;)</span>
+<span class="sd">            open(ner_xml_path + &#39;-clean&#39;, &#39;wb&#39;).write(hope_original.encode(&#39;utf-8&#39;))</span>
+<span class="sd">            print ner_xml_path + &#39;-clean&#39;</span>
+<span class="sd">            &#39;&#39;&#39;</span>
+
+            <span class="c">#tagging.raw_tagging = tagged_doc</span>
+            <span class="n">tagging</span><span class="o">.</span><span class="n">generation_time</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">make_stream_time</span><span class="p">()</span>
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">taggings</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">tagger_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">tagging</span>       <span class="c"># pylint: disable=E1101</span>
+
+            <span class="c">## could consume lots of memory here by instantiating everything</span>
+            <span class="n">sentences</span><span class="p">,</span> <span class="n">relations</span><span class="p">,</span> <span class="n">attributes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_sentences</span><span class="p">(</span><span class="n">ner_dom</span><span class="p">)</span>
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">tagger_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">sentences</span>    <span class="c"># pylint: disable=E1101</span>
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">relations</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">tagger_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">relations</span>    <span class="c"># pylint: disable=E1101</span>
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">tagger_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">attributes</span>  <span class="c"># pylint: disable=E1101</span>
+
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;finished aligning tokens </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+
+            <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">            for num, sent in enumerate(sentences):</span>
+<span class="sd">                for tok in sent.tokens:</span>
+<span class="sd">                    print &#39;%d\t%d\t%s&#39; % (num, tok.offsets[OffsetType.LINES].first, repr(tok.token))</span>
+<span class="sd">            &#39;&#39;&#39;</span>
+
+            <span class="k">if</span> <span class="s">&#39;align_labels_by&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;align_labels_by&#39;</span><span class="p">]:</span>
+                <span class="k">assert</span> <span class="s">&#39;aligner_data&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;config missing &quot;aligner_data&quot;&#39;</span>
+                <span class="n">aligner</span> <span class="o">=</span> <span class="n">AlignmentStrategies</span><span class="p">[</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;align_labels_by&#39;</span><span class="p">]</span> <span class="p">]</span>
+                <span class="n">aligner</span><span class="p">(</span> <span class="n">stream_item</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;aligner_data&#39;</span><span class="p">]</span> <span class="p">)</span>
+
+            <span class="c">## forcibly collect dereferenced objects</span>
+            <span class="n">gc</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">o_chunk</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">stream_item</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">MemoryError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+                <span class="n">msg</span> <span class="o">+=</span> <span class="n">make_memory_info_msg</span><span class="p">()</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+                <span class="k">raise</span> <span class="n">PipelineOutOfMemory</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+
+        <span class="c">## all done, so close the o_chunk</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">o_chunk</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;finished chunk for </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">ner_xml_path</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">MemoryError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+            <span class="n">msg</span> <span class="o">+=</span> <span class="n">make_memory_info_msg</span><span class="p">()</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="n">PipelineOutOfMemory</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">get_sentences</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ner_dom</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;parse the sentences and tokens out of the XML&#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="n">exceptions</span><span class="o">.</span><span class="n">NotImplementedError</span>
+
+    <span class="k">def</span> <span class="nf">shutdown</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        send SIGTERM to the tagger child process</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_child</span><span class="o">.</span><span class="n">terminate</span><span class="p">()</span>
+            <span class="k">except</span> <span class="ne">OSError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">exc</span><span class="o">.</span><span class="n">errno</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+                    <span class="c">## child is already gone, possibly because it ran</span>
+                    <span class="c">## out of memory and caused us to shutdown</span>
+                    <span class="k">pass</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

@@ -1,0 +1,1850 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>2. streamcorpus — single-document data representation &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../index.html" />
+    <link rel="next" title="3. streamcorpus_pipeline — stream item processing framework" href="streamcorpus_pipeline.html" />
+    <link rel="prev" title="1. Overview of StreamCorpus software components" href="overview.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="streamcorpus_pipeline.html" title="3. streamcorpus_pipeline — stream item processing framework"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="overview.html" title="1. Overview of StreamCorpus software components"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="streamcorpus-single-document-data-representation">
+<h1>2. <code class="xref py py-mod docutils literal"><span class="pre">streamcorpus</span></code> &#8212; single-document data representation<a class="headerlink" href="#streamcorpus-single-document-data-representation" title="Permalink to this headline">¶</a></h1>
+<p>The core data representation for individual documents is a
+<a class="reference internal" href="#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">StreamItem</span></code></a>.  This includes both storage for the
+entire body contents in several forms and storage for tokenizers that
+parse the document.  This is a pure in-memory form, but generated with
+Apache Thrift, so that it can be serialized to network storage or
+on-disk <a class="reference internal" href="#streamcorpus.Chunk" title="streamcorpus.Chunk"><code class="xref py py-class docutils literal"><span class="pre">Chunk</span></code></a> files.</p>
+<p>In addition to the current version, there are two previous versions of
+the <a class="reference internal" href="#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">StreamItem</span></code></a> structure, and files in the
+previous format are stored in places such as Amazon S3 public data
+sets.</p>
+<div class="section" id="stream-items">
+<h2>2.1. Stream items<a class="headerlink" href="#stream-items" title="Permalink to this headline">¶</a></h2>
+<p>There are many parts to this, loosely organized as follows:</p>
+<ul class="simple">
+<li>A <a class="reference internal" href="#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">StreamItem</span></code></a> contains metadata, plus the
+<a class="reference internal" href="#streamcorpus.StreamItem.body" title="streamcorpus.StreamItem.body"><code class="xref py py-attr docutils literal"><span class="pre">body</span></code></a>
+<a class="reference internal" href="#streamcorpus.ContentItem" title="streamcorpus.ContentItem"><code class="xref py py-class docutils literal"><span class="pre">ContentItem</span></code></a>.  There are
+<a class="reference internal" href="#streamcorpus.Rating" title="streamcorpus.Rating"><code class="xref py py-class docutils literal"><span class="pre">Rating</span></code></a> objects giving the relevance of the
+entire document to chosen target entities.</li>
+<li>A <a class="reference internal" href="#streamcorpus.ContentItem" title="streamcorpus.ContentItem"><code class="xref py py-class docutils literal"><span class="pre">ContentItem</span></code></a> contains the actual data,
+generally progressing from <a class="reference internal" href="#streamcorpus.ContentItem.raw" title="streamcorpus.ContentItem.raw"><code class="xref py py-attr docutils literal"><span class="pre">raw</span></code></a>
+form to <a class="reference internal" href="#streamcorpus.ContentItem.clean_html" title="streamcorpus.ContentItem.clean_html"><code class="xref py py-attr docutils literal"><span class="pre">clean_html</span></code></a> and then
+<a class="reference internal" href="#streamcorpus.ContentItem.clean_visible" title="streamcorpus.ContentItem.clean_visible"><code class="xref py py-attr docutils literal"><span class="pre">clean_visible</span></code></a> forms.  An NLP
+tagger produces <a class="reference internal" href="#streamcorpus.ContentItem.sentences" title="streamcorpus.ContentItem.sentences"><code class="xref py py-attr docutils literal"><span class="pre">sentences</span></code></a> from
+these.  Annotators can add <a class="reference internal" href="#streamcorpus.ContentItem.labels" title="streamcorpus.ContentItem.labels"><code class="xref py py-attr docutils literal"><span class="pre">labels</span></code></a>
+to content items.</li>
+<li>A <a class="reference internal" href="#streamcorpus.Sentence" title="streamcorpus.Sentence"><code class="xref py py-class docutils literal"><span class="pre">Sentence</span></code></a> just contains an ordered list of
+<a class="reference internal" href="#streamcorpus.Sentence.tokens" title="streamcorpus.Sentence.tokens"><code class="xref py py-attr docutils literal"><span class="pre">tokens</span></code></a>, and may again be annotated
+with <a class="reference internal" href="#streamcorpus.Sentence.labels" title="streamcorpus.Sentence.labels"><code class="xref py py-attr docutils literal"><span class="pre">labels</span></code></a>.</li>
+</ul>
+<dl class="class">
+<dt id="streamcorpus.StreamItem">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">StreamItem</code><span class="sig-paren">(</span><em>version=1</em>, <em>doc_id=None</em>, <em>abs_url=None</em>, <em>schost=None</em>, <em>original_url=None</em>, <em>source=None</em>, <em>body=None</em>, <em>source_metadata={}</em>, <em>stream_id=None</em>, <em>stream_time=None</em>, <em>other_content={}</em>, <em>rating={}</em>, <em>external_ids={}</em><span class="sig-paren">)</span><a class="headerlink" href="#streamcorpus.StreamItem" title="Permalink to this definition">¶</a></dt>
+<dd><p>This is the primary interface to the corpus data.  It is a
+snapshot of a single document, identified by its URL, at a single
+point in time.  All corpora are stream corpora, even if they were
+not explicitly created as such.</p>
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.version">
+<code class="descname">version</code><a class="headerlink" href="#streamcorpus.StreamItem.version" title="Permalink to this definition">¶</a></dt>
+<dd><p>Version of this stream item, always
+<code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.Versions.v0_3_0</span></code>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.doc_id">
+<code class="descname">doc_id</code><a class="headerlink" href="#streamcorpus.StreamItem.doc_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Identifier of the document, which may change over time, and of
+which this stream item is a snapshot.  This is always an MD5
+hash of <a class="reference internal" href="#streamcorpus.StreamItem.abs_url" title="streamcorpus.StreamItem.abs_url"><code class="xref py py-attr docutils literal"><span class="pre">abs_url</span></code></a>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.abs_url">
+<code class="descname">abs_url</code><a class="headerlink" href="#streamcorpus.StreamItem.abs_url" title="Permalink to this definition">¶</a></dt>
+<dd><p>Normalized form of the original document URL.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.schost">
+<code class="descname">schost</code><a class="headerlink" href="#streamcorpus.StreamItem.schost" title="Permalink to this definition">¶</a></dt>
+<dd><p><code class="docutils literal"><span class="pre">scheme://hostname</span></code> part of <a class="reference internal" href="#streamcorpus.StreamItem.abs_url" title="streamcorpus.StreamItem.abs_url"><code class="xref py py-attr docutils literal"><span class="pre">abs_url</span></code></a>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.original_url">
+<code class="descname">original_url</code><a class="headerlink" href="#streamcorpus.StreamItem.original_url" title="Permalink to this definition">¶</a></dt>
+<dd><p>Original URL of the document.  This is only present of the
+original URL is not a valid canonicalized URL, in which case
+<a class="reference internal" href="#streamcorpus.StreamItem.abs_url" title="streamcorpus.StreamItem.abs_url"><code class="xref py py-attr docutils literal"><span class="pre">abs_url</span></code></a> will be derived from this field.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.source">
+<code class="descname">source</code><a class="headerlink" href="#streamcorpus.StreamItem.source" title="Permalink to this definition">¶</a></dt>
+<dd><p>String uniquely identifying this data set.  Should start with
+a year string, such as &#8220;news&#8221; or &#8220;social&#8221;.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.body">
+<code class="descname">body</code><a class="headerlink" href="#streamcorpus.StreamItem.body" title="Permalink to this definition">¶</a></dt>
+<dd><p><a class="reference internal" href="#streamcorpus.ContentItem" title="streamcorpus.ContentItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.ContentItem</span></code></a> holding the primary content
+of the stream item.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.source_metadata">
+<code class="descname">source_metadata</code><a class="headerlink" href="#streamcorpus.StreamItem.source_metadata" title="Permalink to this definition">¶</a></dt>
+<dd><p>Dictionary mapping strings to arbitrary binary data.  The keys
+should be short, descriptive, and free of whitespace.  In many
+cases the keys will be the same as the <a class="reference internal" href="#streamcorpus.StreamItem.source" title="streamcorpus.StreamItem.source"><code class="xref py py-attr docutils literal"><span class="pre">source</span></code></a> of this
+stream item, and the values will be serialized JSON matching a
+metadata schema from &lt;<a class="reference external" href="http://trec-kba.org/schemas/v1.0/">http://trec-kba.org/schemas/v1.0/</a>&gt;.
+<code class="docutils literal"><span class="pre">http_headers</span></code> is also an expected key.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.stream_id">
+<code class="descname">stream_id</code><a class="headerlink" href="#streamcorpus.StreamItem.stream_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Unique identifier for a stream item, snapshotting a document
+at a point in time.  This should be constructed as:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">si</span><span class="o">.</span><span class="n">stream_id</span> <span class="o">=</span> <span class="s">&#39;</span><span class="si">%d</span><span class="s">-</span><span class="si">%s</span><span class="s">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">stream_time</span><span class="o">.</span><span class="n">epoch_ticks</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">doc_id</span><span class="p">)</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.stream_time">
+<code class="descname">stream_time</code><a class="headerlink" href="#streamcorpus.StreamItem.stream_time" title="Permalink to this definition">¶</a></dt>
+<dd><p><a class="reference internal" href="#streamcorpus.StreamTime" title="streamcorpus.StreamTime"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamTime</span></code></a> identifying the earliest time
+that this content was known to exist.  Usually, <a class="reference internal" href="#streamcorpus.StreamItem.body" title="streamcorpus.StreamItem.body"><code class="xref py py-attr docutils literal"><span class="pre">body</span></code></a>
+was saved at the time of that first observation.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.other_content">
+<code class="descname">other_content</code><a class="headerlink" href="#streamcorpus.StreamItem.other_content" title="Permalink to this definition">¶</a></dt>
+<dd><p>Dictionary mapping strings to
+<a class="reference internal" href="#streamcorpus.ContentItem" title="streamcorpus.ContentItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.ContentItem</span></code></a> for additional data attached
+to this stream item.  Typical keys are <code class="docutils literal"><span class="pre">title</span></code>, <code class="docutils literal"><span class="pre">anchor</span></code>,
+or <code class="docutils literal"><span class="pre">extracted</span></code>.  <code class="docutils literal"><span class="pre">anchor</span></code> should map to the single anchor
+text of a hyperlink pointing to this documentation.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.ratings">
+<code class="descname">ratings</code><a class="headerlink" href="#streamcorpus.StreamItem.ratings" title="Permalink to this definition">¶</a></dt>
+<dd><p>Dictionary mapping annotator ID strings to lists of
+<a class="reference internal" href="#streamcorpus.Rating" title="streamcorpus.Rating"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.Rating</span></code></a> judging the relationship of this
+entire document to some target entity.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.StreamItem.external_ids">
+<code class="descname">external_ids</code><a class="headerlink" href="#streamcorpus.StreamItem.external_ids" title="Permalink to this definition">¶</a></dt>
+<dd><p>Two-level map from system identifier to document or stream ID
+to some external identifier.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Rating">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Rating</code><a class="headerlink" href="#streamcorpus.Rating" title="Permalink to this definition">¶</a></dt>
+<dd><p>Ratings are human-generated assertions about an entire document&#8217;s
+utility for a particular topic or entity in a reference knowledge
+base.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Rating.annotator">
+<code class="descname">annotator</code><a class="headerlink" href="#streamcorpus.Rating.annotator" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus.Annotator" title="streamcorpus.Annotator"><code class="xref py py-class docutils literal"><span class="pre">Annotator</span></code></a> that produced this rating.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Rating.target">
+<code class="descname">target</code><a class="headerlink" href="#streamcorpus.Rating.target" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus.Target" title="streamcorpus.Target"><code class="xref py py-class docutils literal"><span class="pre">Target</span></code></a> of the rating.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Rating.relevance">
+<code class="descname">relevance</code><a class="headerlink" href="#streamcorpus.Rating.relevance" title="Permalink to this definition">¶</a></dt>
+<dd><p>Numerical score assigned by annotator to &#8220;judge&#8221; or &#8220;rate&#8221; the
+utility of this stream item to addressing the target
+information need.  The range and interpretation of relevance
+numbers depends on the annotator.  This value can represent a
+rank ordering or an enumeration such as -1=Garbage, 0=Neutral,
+1=Useful, 2=Vital.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Rating.contains_mention">
+<code class="descname">contains_mention</code><a class="headerlink" href="#streamcorpus.Rating.contains_mention" title="Permalink to this definition">¶</a></dt>
+<dd><p>Boolean indication of whether the document actually mentions
+the target entity.  This is only partially correlated with
+relevance.  For example, a document might mention the entity
+but only in &#8220;chrome&#8221; text, making it a Garbage-rated text for
+that entity.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Rating.comments">
+<code class="descname">comments</code><a class="headerlink" href="#streamcorpus.Rating.comments" title="Permalink to this definition">¶</a></dt>
+<dd><p>Any additional notes provided by the annotator.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Rating.mentions">
+<code class="descname">mentions</code><a class="headerlink" href="#streamcorpus.Rating.mentions" title="Permalink to this definition">¶</a></dt>
+<dd><p>Specific strings that correspond to the entity in text.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Rating.flags">
+<code class="descname">flags</code><a class="headerlink" href="#streamcorpus.Rating.flags" title="Permalink to this definition">¶</a></dt>
+<dd><p>List of enumeration flags from
+<a class="reference internal" href="#streamcorpus.FlagType" title="streamcorpus.FlagType"><code class="xref py py-class docutils literal"><span class="pre">FlagType</span></code></a>; for instance,
+<a class="reference internal" href="#streamcorpus.FlagType.PROFILE" title="streamcorpus.FlagType.PROFILE"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.FlagType.PROFILE</span></code></a> to indicate that this
+stream item is a profile for the target entity.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.ContentItem">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">ContentItem</code><a class="headerlink" href="#streamcorpus.ContentItem" title="Permalink to this definition">¶</a></dt>
+<dd><p>A complete representation of the item&#8217;s data.  For instance, the
+<a class="reference internal" href="#streamcorpus.StreamItem.body" title="streamcorpus.StreamItem.body"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.StreamItem.body</span></code></a> is a content item.</p>
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.raw">
+<code class="descname">raw</code><a class="headerlink" href="#streamcorpus.ContentItem.raw" title="Permalink to this definition">¶</a></dt>
+<dd><p>The original download as an unprocessed byte array.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.encoding">
+<code class="descname">encoding</code><a class="headerlink" href="#streamcorpus.ContentItem.encoding" title="Permalink to this definition">¶</a></dt>
+<dd><p>Character encoding, either guessed or determined from protocol
+headers.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.media_type">
+<code class="descname">media_type</code><a class="headerlink" href="#streamcorpus.ContentItem.media_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>MIME type of the document, possibly from an HTTP or similar
+<code class="docutils literal"><span class="pre">Content-Type:</span></code> header</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.clean_html">
+<code class="descname">clean_html</code><a class="headerlink" href="#streamcorpus.ContentItem.clean_html" title="Permalink to this definition">¶</a></dt>
+<dd><p>HTML-formatted version of <a class="reference internal" href="#streamcorpus.ContentItem.raw" title="streamcorpus.ContentItem.raw"><code class="xref py py-attr docutils literal"><span class="pre">raw</span></code></a>.  This has correct UTF-8
+encoding and no broken tags.  All HTML-escaped characters are
+converted to their UTF-8 equivalents, and <code class="docutils literal"><span class="pre">&lt;</span></code>, <code class="docutils literal"><span class="pre">&gt;</span></code>, and
+<code class="docutils literal"><span class="pre">&amp;</span></code> are escaped.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.clean_visible">
+<code class="descname">clean_visible</code><a class="headerlink" href="#streamcorpus.ContentItem.clean_visible" title="Permalink to this definition">¶</a></dt>
+<dd><p>Copy of <a class="reference internal" href="#streamcorpus.ContentItem.clean_html" title="streamcorpus.ContentItem.clean_html"><code class="xref py py-attr docutils literal"><span class="pre">clean_html</span></code></a> with all HTML tags replaced with
+whitespace.  Byte offsets in this and <a class="reference internal" href="#streamcorpus.ContentItem.clean_html" title="streamcorpus.ContentItem.clean_html"><code class="xref py py-attr docutils literal"><span class="pre">clean_html</span></code></a> are
+identical.  <code class="docutils literal"><span class="pre">&lt;</span></code>, <code class="docutils literal"><span class="pre">&gt;</span></code>, and <code class="docutils literal"><span class="pre">&amp;</span></code> remain HTML-escaped.  This
+text can be directly inserted into an HTML or XML document
+without further escaping.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.logs">
+<code class="descname">logs</code><a class="headerlink" href="#streamcorpus.ContentItem.logs" title="Permalink to this definition">¶</a></dt>
+<dd><p>List of string log messages produced from the processing
+pipeline</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.taggings">
+<code class="descname">taggings</code><a class="headerlink" href="#streamcorpus.ContentItem.taggings" title="Permalink to this definition">¶</a></dt>
+<dd><p>A dictionary mapping string tagger IDs to
+<a class="reference internal" href="#streamcorpus.Tagging" title="streamcorpus.Tagging"><code class="xref py py-class docutils literal"><span class="pre">Tagging</span></code></a> objects.  This is a set of
+auto-generated taggings, such as a one-word-per-line (OWLP)
+tokenization and sentence chunking with part-of-speech,
+lemmatization, and NER classification.  The dictionary key
+should match the <a class="reference internal" href="#streamcorpus.Tagging.tagger_id" title="streamcorpus.Tagging.tagger_id"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.Tagging.tagger_id</span></code></a>, and
+also match the key in <a class="reference internal" href="#streamcorpus.ContentItem.sentences" title="streamcorpus.ContentItem.sentences"><code class="xref py py-attr docutils literal"><span class="pre">sentences</span></code></a> and
+<a class="reference internal" href="#streamcorpus.ContentItem.sentence_blobs" title="streamcorpus.ContentItem.sentence_blobs"><code class="xref py py-attr docutils literal"><span class="pre">sentence_blobs</span></code></a>, which come from transforming a
+<a class="reference internal" href="#streamcorpus.Tagging.raw_tagging" title="streamcorpus.Tagging.raw_tagging"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.Tagging.raw_tagging</span></code></a> into
+<a class="reference internal" href="#streamcorpus.Sentence" title="streamcorpus.Sentence"><code class="xref py py-class docutils literal"><span class="pre">Sentence</span></code></a> and
+<a class="reference internal" href="#streamcorpus.Token" title="streamcorpus.Token"><code class="xref py py-class docutils literal"><span class="pre">Token</span></code></a> instances.</p>
+<p>Taggings are generated from <a class="reference internal" href="#streamcorpus.ContentItem.clean_visible" title="streamcorpus.ContentItem.clean_visible"><code class="xref py py-attr docutils literal"><span class="pre">clean_visible</span></code></a>, and offsets
+of all types refer to the <a class="reference internal" href="#streamcorpus.ContentItem.clean_visible" title="streamcorpus.ContentItem.clean_visible"><code class="xref py py-attr docutils literal"><span class="pre">clean_visible</span></code></a> or
+<a class="reference internal" href="#streamcorpus.ContentItem.clean_html" title="streamcorpus.ContentItem.clean_html"><code class="xref py py-attr docutils literal"><span class="pre">clean_html</span></code></a> version of the data, not <a class="reference internal" href="#streamcorpus.ContentItem.raw" title="streamcorpus.ContentItem.raw"><code class="xref py py-attr docutils literal"><span class="pre">raw</span></code></a>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.labels">
+<code class="descname">labels</code><a class="headerlink" href="#streamcorpus.ContentItem.labels" title="Permalink to this definition">¶</a></dt>
+<dd><p>A dictionary mapping string annotator IDs to lists of
+<a class="reference internal" href="#streamcorpus.Label" title="streamcorpus.Label"><code class="xref py py-class docutils literal"><span class="pre">Label</span></code></a> annotations on the entire content item.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.sentences">
+<code class="descname">sentences</code><a class="headerlink" href="#streamcorpus.ContentItem.sentences" title="Permalink to this definition">¶</a></dt>
+<dd><p>A dictionary mapping tagger IDs to ordered lists of
+<a class="reference internal" href="#streamcorpus.Sentence" title="streamcorpus.Sentence"><code class="xref py py-class docutils literal"><span class="pre">Sentence</span></code></a> objects produced by that
+tagger.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.sentence_blobs">
+<code class="descname">sentence_blobs</code><a class="headerlink" href="#streamcorpus.ContentItem.sentence_blobs" title="Permalink to this definition">¶</a></dt>
+<dd><p>A dictionary the same as <a class="reference internal" href="#streamcorpus.ContentItem.sentences" title="streamcorpus.ContentItem.sentences"><code class="xref py py-attr docutils literal"><span class="pre">sentences</span></code></a>, but the dictionary
+values are Thrift-serialized binary strings that can be
+deserialized into the lists on demand.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.language">
+<code class="descname">language</code><a class="headerlink" href="#streamcorpus.ContentItem.language" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus.Language" title="streamcorpus.Language"><code class="xref py py-class docutils literal"><span class="pre">Language</span></code></a> of the text.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.relations">
+<code class="descname">relations</code><a class="headerlink" href="#streamcorpus.ContentItem.relations" title="Permalink to this definition">¶</a></dt>
+<dd><p>A dictionary mapping tagger IDs to lists of
+<a class="reference internal" href="#streamcorpus.Relation" title="streamcorpus.Relation"><code class="xref py py-class docutils literal"><span class="pre">Relation</span></code></a> identified by the tagger.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.attributes">
+<code class="descname">attributes</code><a class="headerlink" href="#streamcorpus.ContentItem.attributes" title="Permalink to this definition">¶</a></dt>
+<dd><p>A dictionary mapping tagger IDs to lists of
+<a class="reference internal" href="#streamcorpus.Attribute" title="streamcorpus.Attribute"><code class="xref py py-class docutils literal"><span class="pre">Attribute</span></code></a> identified by the tagger.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.ContentItem.external_ids">
+<code class="descname">external_ids</code><a class="headerlink" href="#streamcorpus.ContentItem.external_ids" title="Permalink to this definition">¶</a></dt>
+<dd><p>A dictionary mapping tagger IDs to dictionaries mapping
+numeric mention IDs to text.  This allows external systems to
+associate record IDs with individual mentions or sets of
+mentions.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Annotator">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Annotator</code><a class="headerlink" href="#streamcorpus.Annotator" title="Permalink to this definition">¶</a></dt>
+<dd><p>Description of a human (or a set of humans) that generated the
+data in a <a class="reference internal" href="#streamcorpus.Label" title="streamcorpus.Label"><code class="xref py py-class docutils literal"><span class="pre">Label</span></code></a> or
+<a class="reference internal" href="#streamcorpus.Rating" title="streamcorpus.Rating"><code class="xref py py-class docutils literal"><span class="pre">Rating</span></code></a>.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Annotator.annotator_id">
+<code class="descname">annotator_id</code><a class="headerlink" href="#streamcorpus.Annotator.annotator_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Name of the annotator.  This is also used as the source key in
+several maps, and it is important for annotator IDs to be both
+consistent across annotations and unique.  We use the
+following conventions:</p>
+<ul class="simple">
+<li>Avoid whitespace.</li>
+<li>An email address is the best identifier.</li>
+<li>Where a single email address is not appropriate, create a
+descriptive string, e.g. <code class="docutils literal"><span class="pre">nist-trec-kba-2012-assessors</span></code>.</li>
+<li><code class="docutils literal"><span class="pre">author</span></code> means the person who wrote the original text.</li>
+</ul>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Annotator.annotation_time">
+<code class="descname">annotation_time</code><a class="headerlink" href="#streamcorpus.Annotator.annotation_time" title="Permalink to this definition">¶</a></dt>
+<dd><p>Approximate <a class="reference internal" href="#streamcorpus.StreamTime" title="streamcorpus.StreamTime"><code class="xref py py-class docutils literal"><span class="pre">StreamTime</span></code></a> when the
+annotation was provided by a human.  This may be <code class="xref py py-const docutils literal"><span class="pre">None</span></code>
+if no time is available.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Attribute">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Attribute</code><a class="headerlink" href="#streamcorpus.Attribute" title="Permalink to this definition">¶</a></dt>
+<dd><p>Description of an attribute of an entity discovered by a tagger in the text.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Attribute.attribute_type">
+<code class="descname">attribute_type</code><a class="headerlink" href="#streamcorpus.Attribute.attribute_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus.AttributeType" title="streamcorpus.AttributeType"><code class="xref py py-class docutils literal"><span class="pre">AttributeType</span></code></a> of the attribute.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Attribute.evidence">
+<code class="descname">evidence</code><a class="headerlink" href="#streamcorpus.Attribute.evidence" title="Permalink to this definition">¶</a></dt>
+<dd><p>String presented by the tagger as evidence of the attribute.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Attribute.value">
+<code class="descname">value</code><a class="headerlink" href="#streamcorpus.Attribute.value" title="Permalink to this definition">¶</a></dt>
+<dd><p>Normalized, typed string value derived from <a class="reference internal" href="#streamcorpus.Attribute.evidence" title="streamcorpus.Attribute.evidence"><code class="xref py py-attr docutils literal"><span class="pre">evidence</span></code></a>.
+The type of this is determined by <a class="reference internal" href="#streamcorpus.Attribute.attribute_type" title="streamcorpus.Attribute.attribute_type"><code class="xref py py-attr docutils literal"><span class="pre">attribute_type</span></code></a>.  If
+the type is <a class="reference internal" href="#streamcorpus.AttributeType.PER_GENDER" title="streamcorpus.AttributeType.PER_GENDER"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.AttributeType.PER_GENDER</span></code></a>, for
+instance, this value will be a string containing an integer
+value from the <a class="reference internal" href="#streamcorpus.Gender" title="streamcorpus.Gender"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.Gender</span></code></a> enumeration.  If
+the type implies a date-time type, the value is a
+<a class="reference internal" href="#streamcorpus.StreamTime.zulu_timestamp" title="streamcorpus.StreamTime.zulu_timestamp"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.StreamTime.zulu_timestamp</span></code></a>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Attribute.sentence_id">
+<code class="descname">sentence_id</code><a class="headerlink" href="#streamcorpus.Attribute.sentence_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Zero-based index into the sentences array for this tagger.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Attribute.mention_id">
+<code class="descname">mention_id</code><a class="headerlink" href="#streamcorpus.Attribute.mention_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Index into the mentions in this document.  This identifies the
+mention to which the attribute applies.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Label">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Label</code><a class="headerlink" href="#streamcorpus.Label" title="Permalink to this definition">¶</a></dt>
+<dd><p>Labels are human-generated assertions about a portion of a
+document.  For example, a human author might label their own text
+by inserting hyperlinks to Wikipedia, or a NIST assessor might
+record which tokens in a text mention a target entity.</p>
+<p>Labels appear in lists as the value parts of
+<a class="reference internal" href="#streamcorpus.Token.labels" title="streamcorpus.Token.labels"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.Token.labels</span></code></a>,
+<a class="reference internal" href="#streamcorpus.Sentence.labels" title="streamcorpus.Sentence.labels"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.Sentence.labels</span></code></a>, and
+<a class="reference internal" href="#streamcorpus.ContentItem.labels" title="streamcorpus.ContentItem.labels"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.ContentItem.labels</span></code></a>.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Label.annotator">
+<code class="descname">annotator</code><a class="headerlink" href="#streamcorpus.Label.annotator" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus.Annotator" title="streamcorpus.Annotator"><code class="xref py py-class docutils literal"><span class="pre">Annotator</span></code></a> source of this label.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.target">
+<code class="descname">target</code><a class="headerlink" href="#streamcorpus.Label.target" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus.Target" title="streamcorpus.Target"><code class="xref py py-class docutils literal"><span class="pre">Target</span></code></a> entity of this label.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.offsets">
+<code class="descname">offsets</code><a class="headerlink" href="#streamcorpus.Label.offsets" title="Permalink to this definition">¶</a></dt>
+<dd><p>Map of <a class="reference internal" href="#streamcorpus.OffsetType" title="streamcorpus.OffsetType"><code class="xref py py-class docutils literal"><span class="pre">OffsetType</span></code></a> enum value to
+<a class="reference internal" href="#streamcorpus.Offset" title="streamcorpus.Offset"><code class="xref py py-class docutils literal"><span class="pre">Offset</span></code></a> describing what is labeled.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.positive">
+<code class="descname">positive</code><a class="headerlink" href="#streamcorpus.Label.positive" title="Permalink to this definition">¶</a></dt>
+<dd><p>Labels are usually positive assertions that the token mentions
+the target.  It is sometimes useful to collect negative
+assertions that a token is not the target, which can be
+indicated by setting this field to <code class="xref py py-const docutils literal"><span class="pre">False</span></code>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.comments">
+<code class="descname">comments</code><a class="headerlink" href="#streamcorpus.Label.comments" title="Permalink to this definition">¶</a></dt>
+<dd><p>Additional notes from the annotator about this label.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.mentions">
+<code class="descname">mentions</code><a class="headerlink" href="#streamcorpus.Label.mentions" title="Permalink to this definition">¶</a></dt>
+<dd><p>List of strings that are mentions of this target in the text.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.relevance">
+<code class="descname">relevance</code><a class="headerlink" href="#streamcorpus.Label.relevance" title="Permalink to this definition">¶</a></dt>
+<dd><p>Numerical score assigned by annotator to &#8220;judge&#8221; or &#8220;rate&#8221; the
+utility of this stream item to addressing the target
+information need.  The range and interpretation of relevance
+numbers depends on the annotator.  This value can represent a
+rank ordering or an enumeration such as -1=Garbage, 0=Neutral,
+1=Useful, 2=Vital.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.stream_id">
+<code class="descname">stream_id</code><a class="headerlink" href="#streamcorpus.Label.stream_id" title="Permalink to this definition">¶</a></dt>
+<dd><p><a class="reference internal" href="#streamcorpus.StreamItem.stream_id" title="streamcorpus.StreamItem.stream_id"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.StreamItem.stream_id</span></code></a> of the stream item
+containing this label.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Label.flags">
+<code class="descname">flags</code><a class="headerlink" href="#streamcorpus.Label.flags" title="Permalink to this definition">¶</a></dt>
+<dd><p>List of integer <a class="reference internal" href="#streamcorpus.FlagType" title="streamcorpus.FlagType"><code class="xref py py-class docutils literal"><span class="pre">FlagType</span></code></a> enumeration
+values further describing this label.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Target">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Target</code><a class="headerlink" href="#streamcorpus.Target" title="Permalink to this definition">¶</a></dt>
+<dd><p>An entity or topic being identified by a
+<a class="reference internal" href="#streamcorpus.Label" title="streamcorpus.Label"><code class="xref py py-class docutils literal"><span class="pre">Label</span></code></a>.  These often come from a knowledge
+base such as Wikipedia.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Target.target_id">
+<code class="descname">target_id</code><a class="headerlink" href="#streamcorpus.Target.target_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Unique string identifier for the target.  This can be a URL
+from a Wikipedia, Freebase, or other structured reference
+system about the target.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Target.kb_id">
+<code class="descname">kb_id</code><a class="headerlink" href="#streamcorpus.Target.kb_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Optional string identifying the knowledge base, if it is not
+obvious from <a class="reference internal" href="#streamcorpus.Target.target_id" title="streamcorpus.Target.target_id"><code class="xref py py-attr docutils literal"><span class="pre">target_id</span></code></a>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Target.kb_snapshot_time">
+<code class="descname">kb_snapshot_time</code><a class="headerlink" href="#streamcorpus.Target.kb_snapshot_time" title="Permalink to this definition">¶</a></dt>
+<dd><p><a class="reference internal" href="#streamcorpus.StreamTime" title="streamcorpus.StreamTime"><code class="xref py py-class docutils literal"><span class="pre">StreamTime</span></code></a> when the knowledge base
+article was accessed.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.FlagType">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">FlagType</code><a class="headerlink" href="#streamcorpus.FlagType" title="Permalink to this definition">¶</a></dt>
+<dd><p>General-purpose flags.  These are integer values.</p>
+<dl class="attribute">
+<dt id="streamcorpus.FlagType.PROFILE">
+<code class="descname">PROFILE</code><a class="headerlink" href="#streamcorpus.FlagType.PROFILE" title="Permalink to this definition">¶</a></dt>
+<dd><p>This label is to a profile for the target in a knowledge base.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.StreamTime">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">StreamTime</code><a class="headerlink" href="#streamcorpus.StreamTime" title="Permalink to this definition">¶</a></dt>
+<dd><p>Time attached to a stream item.</p>
+<dl class="attribute">
+<dt id="streamcorpus.StreamTime.epoch_ticks">
+<code class="descname">epoch_ticks</code><a class="headerlink" href="#streamcorpus.StreamTime.epoch_ticks" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<p>Time, in fractional seconds, since midnight 1 Jan 1970 UTC (&#8220;Unix
+time&#8221;), the same time as returned by <a class="reference external" href="http://docs.python.org/library/time.html#time.time" title="(in Python v2.7)"><code class="xref py py-func docutils literal"><span class="pre">time.time()</span></code></a>.</p>
+<dl class="attribute">
+<dt id="streamcorpus.StreamTime.zulu_timestamp">
+<code class="descname">zulu_timestamp</code><a class="headerlink" href="#streamcorpus.StreamTime.zulu_timestamp" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<p>Formatted version of the time string.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Offset">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Offset</code><a class="headerlink" href="#streamcorpus.Offset" title="Permalink to this definition">¶</a></dt>
+<dd><p>A range of data within some <a class="reference internal" href="#streamcorpus.ContentItem" title="streamcorpus.ContentItem"><code class="xref py py-class docutils literal"><span class="pre">ContentItem</span></code></a>.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Offset.type">
+<code class="descname">type</code><a class="headerlink" href="#streamcorpus.Offset.type" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus.OffsetType" title="streamcorpus.OffsetType"><code class="xref py py-class docutils literal"><span class="pre">OffsetType</span></code></a> value that describes
+what units this offset uses; for instance,
+<a class="reference internal" href="#streamcorpus.OffsetType.CHARS" title="streamcorpus.OffsetType.CHARS"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.OffsetType.CHARS</span></code></a>.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Offset.first">
+<code class="descname">first</code><a class="headerlink" href="#streamcorpus.Offset.first" title="Permalink to this definition">¶</a></dt>
+<dd><p>First item in the range.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Offset.length">
+<code class="descname">length</code><a class="headerlink" href="#streamcorpus.Offset.length" title="Permalink to this definition">¶</a></dt>
+<dd><p>Length of the range.</p>
+<blockquote>
+<div>data = content_item[offset.first:offset.first+offset.length]</div></blockquote>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Offset.xpath">
+<code class="descname">xpath</code><a class="headerlink" href="#streamcorpus.Offset.xpath" title="Permalink to this definition">¶</a></dt>
+<dd><p>An optional string giving an XPath query into an XML or XHTML
+document.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Offset.content_form">
+<code class="descname">content_form</code><a class="headerlink" href="#streamcorpus.Offset.content_form" title="Permalink to this definition">¶</a></dt>
+<dd><p>If a <a class="reference internal" href="#streamcorpus.ContentItem" title="streamcorpus.ContentItem"><code class="xref py py-class docutils literal"><span class="pre">ContentItem</span></code></a> has multiple forms,
+the name of the form, such as &#8220;raw&#8221;, &#8220;clean_html&#8221;, or
+&#8220;clean_visible&#8221;.  &#8220;clean_visible&#8221; is the most common case.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Offset.value">
+<code class="descname">value</code><a class="headerlink" href="#streamcorpus.Offset.value" title="Permalink to this definition">¶</a></dt>
+<dd><p>The actual content of the range.  Only present as a debugging
+aid and frequently empty.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.OffsetType">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">OffsetType</code><a class="headerlink" href="#streamcorpus.OffsetType" title="Permalink to this definition">¶</a></dt>
+<dd><p>Part of an <a class="reference internal" href="#streamcorpus.Offset" title="streamcorpus.Offset"><code class="xref py py-class docutils literal"><span class="pre">Offset</span></code></a> that describes what units
+the offset uses.</p>
+<dl class="attribute">
+<dt id="streamcorpus.OffsetType.LINES">
+<code class="descname">LINES</code><a class="headerlink" href="#streamcorpus.OffsetType.LINES" title="Permalink to this definition">¶</a></dt>
+<dd><p>The offset is a range of line numbers.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.OffsetType.BYTES">
+<code class="descname">BYTES</code><a class="headerlink" href="#streamcorpus.OffsetType.BYTES" title="Permalink to this definition">¶</a></dt>
+<dd><p>The offset is a range of bytes.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.OffsetType.CHARS">
+<code class="descname">CHARS</code><a class="headerlink" href="#streamcorpus.OffsetType.CHARS" title="Permalink to this definition">¶</a></dt>
+<dd><p>The offset is a range of characters, typically in Unicode.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Tagging">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Tagging</code><a class="headerlink" href="#streamcorpus.Tagging" title="Permalink to this definition">¶</a></dt>
+<dd><p>Information about and output from a tagging tool.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Tagging.tagger_id">
+<code class="descname">tagger_id</code><a class="headerlink" href="#streamcorpus.Tagging.tagger_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Opaque string identifying the tagger.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Tagging.raw_tagging">
+<code class="descname">raw_tagging</code><a class="headerlink" href="#streamcorpus.Tagging.raw_tagging" title="Permalink to this definition">¶</a></dt>
+<dd><p>Raw output of the tagging tool.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Tagging.tagger_config">
+<code class="descname">tagger_config</code><a class="headerlink" href="#streamcorpus.Tagging.tagger_config" title="Permalink to this definition">¶</a></dt>
+<dd><p>Short, human-readable description of the configuration parameters.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Tagging.tagger_version">
+<code class="descname">tagger_version</code><a class="headerlink" href="#streamcorpus.Tagging.tagger_version" title="Permalink to this definition">¶</a></dt>
+<dd><p>Short, human-readable version string of the tagging tool.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Tagging.generation_time">
+<code class="descname">generation_time</code><a class="headerlink" href="#streamcorpus.Tagging.generation_time" title="Permalink to this definition">¶</a></dt>
+<dd><p><a class="reference internal" href="#streamcorpus.StreamTime" title="streamcorpus.StreamTime"><code class="xref py py-class docutils literal"><span class="pre">StreamTime</span></code></a> the tagging was generated.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Relation">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Relation</code><a class="headerlink" href="#streamcorpus.Relation" title="Permalink to this definition">¶</a></dt>
+<dd><p>Description of a relation between two entities that a tagger
+discovered in the text.</p>
+<p>If a tagger discovers that Bob is located in Chicago, then
+<a class="reference internal" href="#streamcorpus.Relation.relation_type" title="streamcorpus.Relation.relation_type"><code class="xref py py-attr docutils literal"><span class="pre">relation_type</span></code></a> would be
+<a class="reference internal" href="#streamcorpus.RelationType.PHYS_Located" title="streamcorpus.RelationType.PHYS_Located"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.RelationType.PHYS_Located</span></code></a>,
+<a class="reference internal" href="#streamcorpus.Relation.sentence_id_1" title="streamcorpus.Relation.sentence_id_1"><code class="xref py py-attr docutils literal"><span class="pre">sentence_id_1</span></code></a> and <a class="reference internal" href="#streamcorpus.Relation.mention_id_1" title="streamcorpus.Relation.mention_id_1"><code class="xref py py-attr docutils literal"><span class="pre">mention_id_1</span></code></a> would refer to
+&#8220;Bob&#8221;, and <a class="reference internal" href="#streamcorpus.Relation.sentence_id_2" title="streamcorpus.Relation.sentence_id_2"><code class="xref py py-attr docutils literal"><span class="pre">sentence_id_2</span></code></a> and <a class="reference internal" href="#streamcorpus.Relation.mention_id_2" title="streamcorpus.Relation.mention_id_2"><code class="xref py py-attr docutils literal"><span class="pre">mention_id_2</span></code></a> would
+refer to &#8220;Chicago&#8221;.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Relation.relation_type">
+<code class="descname">relation_type</code><a class="headerlink" href="#streamcorpus.Relation.relation_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>Type of the relation, one of the
+<a class="reference internal" href="#streamcorpus.RelationType" title="streamcorpus.RelationType"><code class="xref py py-class docutils literal"><span class="pre">RelationType</span></code></a> enumeration values.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Relation.sentence_id_1">
+<code class="descname">sentence_id_1</code><a class="headerlink" href="#streamcorpus.Relation.sentence_id_1" title="Permalink to this definition">¶</a></dt>
+<dd><p>Zero-based sentence index for the sentences for this tagger ID
+for the first entity.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Relation.mention_id_1">
+<code class="descname">mention_id_1</code><a class="headerlink" href="#streamcorpus.Relation.mention_id_1" title="Permalink to this definition">¶</a></dt>
+<dd><p>Index into the mentions in the document for the first entity.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Relation.sentence_id_2">
+<code class="descname">sentence_id_2</code><a class="headerlink" href="#streamcorpus.Relation.sentence_id_2" title="Permalink to this definition">¶</a></dt>
+<dd><p>Zero-based sentence index for the sentences for this tagger ID
+for the second entity.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Relation.mention_id_2">
+<code class="descname">mention_id_2</code><a class="headerlink" href="#streamcorpus.Relation.mention_id_2" title="Permalink to this definition">¶</a></dt>
+<dd><p>Index into the mentions in the document for the second entity.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Language">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Language</code><a class="headerlink" href="#streamcorpus.Language" title="Permalink to this definition">¶</a></dt>
+<dd><p>Description of a natural language used in the text.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Language.code">
+<code class="descname">code</code><a class="headerlink" href="#streamcorpus.Language.code" title="Permalink to this definition">¶</a></dt>
+<dd><p>Two-letter code for the language, such as &#8220;en&#8221;</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Language.name">
+<code class="descname">name</code><a class="headerlink" href="#streamcorpus.Language.name" title="Permalink to this definition">¶</a></dt>
+<dd><p>Full name of the language</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Sentence">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Sentence</code><a class="headerlink" href="#streamcorpus.Sentence" title="Permalink to this definition">¶</a></dt>
+<dd><p>A complete sentence.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Sentence.tokens">
+<code class="descname">tokens</code><a class="headerlink" href="#streamcorpus.Sentence.tokens" title="Permalink to this definition">¶</a></dt>
+<dd><p>List of <a class="reference internal" href="#streamcorpus.Token" title="streamcorpus.Token"><code class="xref py py-class docutils literal"><span class="pre">Token</span></code></a> in the sentence.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Sentence.labels">
+<code class="descname">labels</code><a class="headerlink" href="#streamcorpus.Sentence.labels" title="Permalink to this definition">¶</a></dt>
+<dd><p>Map of string annotator ID to list of
+<a class="reference internal" href="#streamcorpus.Label" title="streamcorpus.Label"><code class="xref py py-class docutils literal"><span class="pre">Label</span></code></a> for labels over the entire
+sentence.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Token">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Token</code><a class="headerlink" href="#streamcorpus.Token" title="Permalink to this definition">¶</a></dt>
+<dd><p>Textual tokens identified by an NLP pipeline and marked up with
+metadata from automatic taggers, and possibly also labels from
+humans.</p>
+<dl class="attribute">
+<dt id="streamcorpus.Token.token_num">
+<code class="descname">token_num</code><a class="headerlink" href="#streamcorpus.Token.token_num" title="Permalink to this definition">¶</a></dt>
+<dd><p>Zero-based index into the stream of tokens from a document.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.token">
+<code class="descname">token</code><a class="headerlink" href="#streamcorpus.Token.token" title="Permalink to this definition">¶</a></dt>
+<dd><p>Actual token string; a UTF-8 encoded Python <code class="xref py py-func docutils literal"><span class="pre">string()</span></code></p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.offsets">
+<code class="descname">offsets</code><a class="headerlink" href="#streamcorpus.Token.offsets" title="Permalink to this definition">¶</a></dt>
+<dd><p>Location of the token in the original document.  This is a map
+from <a class="reference internal" href="#streamcorpus.OffsetType" title="streamcorpus.OffsetType"><code class="xref py py-class docutils literal"><span class="pre">OffsetType</span></code></a> enum value to
+<a class="reference internal" href="#streamcorpus.Offset" title="streamcorpus.Offset"><code class="xref py py-class docutils literal"><span class="pre">Offset</span></code></a>, allowing the token to have line
+number, byte position, and character position offsets.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.sentence_pos">
+<code class="descname">sentence_pos</code><a class="headerlink" href="#streamcorpus.Token.sentence_pos" title="Permalink to this definition">¶</a></dt>
+<dd><p>Zero-based index into the sentence, or -1 if unavailable.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.lemma">
+<code class="descname">lemma</code><a class="headerlink" href="#streamcorpus.Token.lemma" title="Permalink to this definition">¶</a></dt>
+<dd><p>Lemmatization of the token.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.pos">
+<code class="descname">pos</code><a class="headerlink" href="#streamcorpus.Token.pos" title="Permalink to this definition">¶</a></dt>
+<dd><p>Part-of-speech label.  For possible values, see
+<a class="reference external" href="http://www.ling.upenn.edu/courses/Fall_2003/ling001/penn_treebank_pos.html">http://www.ling.upenn.edu/courses/Fall_2003/ling001/penn_treebank_pos.html</a></p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.entity_type">
+<code class="descname">entity_type</code><a class="headerlink" href="#streamcorpus.Token.entity_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>One of the <a class="reference internal" href="#streamcorpus.EntityType" title="streamcorpus.EntityType"><code class="xref py py-class docutils literal"><span class="pre">EntityType</span></code></a> enumeration values.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.mention_id">
+<code class="descname">mention_id</code><a class="headerlink" href="#streamcorpus.Token.mention_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Identifier for each mention in this tagger&#8217;s description of
+the document.  This is unique for a single tagger within a
+single document.  -1 means &#8220;no mention&#8221;.</p>
+<p>The mention ID distinguishes multi-token mentions; tokens that
+correspond to the same mention will have the same mention ID.
+This is needed when other fields do not change between tokens
+that are part of separate mentions: &#8220;the senator is known to
+his friends as David, Davy, Zeus, and Mr. Elephant&#8221;.</p>
+<p>The mention ID identifies mentions in
+<a class="reference internal" href="#streamcorpus.Relation" title="streamcorpus.Relation"><code class="xref py py-class docutils literal"><span class="pre">Relation</span></code></a> objects.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.equiv_id">
+<code class="descname">equiv_id</code><a class="headerlink" href="#streamcorpus.Token.equiv_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Single-document coref chain ID.  This is unique for a single
+tagger within a single document.  Tokens that refer to the
+same entity will have the same equivalence ID.  -1 means
+&#8220;none&#8221;.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.parent_id">
+<code class="descname">parent_id</code><a class="headerlink" href="#streamcorpus.Token.parent_id" title="Permalink to this definition">¶</a></dt>
+<dd><p>Parent sentence position in the dependency parse.  -1 means
+&#8220;none&#8221;.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.dependency_path">
+<code class="descname">dependency_path</code><a class="headerlink" href="#streamcorpus.Token.dependency_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Grammatical relation label on the path to the parent in a
+dependency parse, defined by whatever tagger was used.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.labels">
+<code class="descname">labels</code><a class="headerlink" href="#streamcorpus.Token.labels" title="Permalink to this definition">¶</a></dt>
+<dd><p>Dictionary mapping annotator ID strings to lists of
+<a class="reference internal" href="#streamcorpus.Label" title="streamcorpus.Label"><code class="xref py py-class docutils literal"><span class="pre">Label</span></code></a> objects for labels on this token.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.mention_type">
+<code class="descname">mention_type</code><a class="headerlink" href="#streamcorpus.Token.mention_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>One of the <a class="reference internal" href="#streamcorpus.MentionType" title="streamcorpus.MentionType"><code class="xref py py-class docutils literal"><span class="pre">MentionType</span></code></a> enumeration
+values.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Token.custom_entity_type">
+<code class="descname">custom_entity_type</code><a class="headerlink" href="#streamcorpus.Token.custom_entity_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>If <a class="reference internal" href="#streamcorpus.Token.entity_type" title="streamcorpus.Token.entity_type"><code class="xref py py-attr docutils literal"><span class="pre">entity_type</span></code></a> is
+<a class="reference internal" href="#streamcorpus.EntityType.CUSTOM_TYPE" title="streamcorpus.EntityType.CUSTOM_TYPE"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.EntityType.CUSTOM_TYPE</span></code></a>, a string
+describing what exactly the entity type is.  This is useful
+when a specialized tagger has a large number of unique entity
+types, such as <code class="docutils literal"><span class="pre">entity:artefact:weapon:blunt</span></code>.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.EntityType">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">EntityType</code><a class="reference internal" href="../_modules/streamcorpus/ttypes.html#EntityType"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.EntityType" title="Permalink to this definition">¶</a></dt>
+<dd><p>Different tagging tools have different strings for labeling the
+various common entity types.  To avoid ambiguity, we define a
+canonical list here, which we will surely have to expand over time
+as new taggers recognize new types of entities.</p>
+<p>LOC: physical location</p>
+<p>MISC: uncategorized named entities, e.g. Civil War for Stanford CoreNLP</p>
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.PER">
+<code class="descname">PER</code><em class="property"> = 0</em><a class="headerlink" href="#streamcorpus.EntityType.PER" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.ORG">
+<code class="descname">ORG</code><em class="property"> = 1</em><a class="headerlink" href="#streamcorpus.EntityType.ORG" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.LOC">
+<code class="descname">LOC</code><em class="property"> = 2</em><a class="headerlink" href="#streamcorpus.EntityType.LOC" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.TIME">
+<code class="descname">TIME</code><em class="property"> = 5</em><a class="headerlink" href="#streamcorpus.EntityType.TIME" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.DATE">
+<code class="descname">DATE</code><em class="property"> = 6</em><a class="headerlink" href="#streamcorpus.EntityType.DATE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.MONEY">
+<code class="descname">MONEY</code><em class="property"> = 7</em><a class="headerlink" href="#streamcorpus.EntityType.MONEY" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.PERCENT">
+<code class="descname">PERCENT</code><em class="property"> = 8</em><a class="headerlink" href="#streamcorpus.EntityType.PERCENT" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.MISC">
+<code class="descname">MISC</code><em class="property"> = 9</em><a class="headerlink" href="#streamcorpus.EntityType.MISC" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.GPE">
+<code class="descname">GPE</code><em class="property"> = 10</em><a class="headerlink" href="#streamcorpus.EntityType.GPE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.FAC">
+<code class="descname">FAC</code><em class="property"> = 11</em><a class="headerlink" href="#streamcorpus.EntityType.FAC" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.VEH">
+<code class="descname">VEH</code><em class="property"> = 12</em><a class="headerlink" href="#streamcorpus.EntityType.VEH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.WEA">
+<code class="descname">WEA</code><em class="property"> = 13</em><a class="headerlink" href="#streamcorpus.EntityType.WEA" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.phone">
+<code class="descname">phone</code><em class="property"> = 14</em><a class="headerlink" href="#streamcorpus.EntityType.phone" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.email">
+<code class="descname">email</code><em class="property"> = 15</em><a class="headerlink" href="#streamcorpus.EntityType.email" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.URL">
+<code class="descname">URL</code><em class="property"> = 16</em><a class="headerlink" href="#streamcorpus.EntityType.URL" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.CUSTOM_TYPE">
+<code class="descname">CUSTOM_TYPE</code><em class="property"> = 17</em><a class="headerlink" href="#streamcorpus.EntityType.CUSTOM_TYPE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.LIST">
+<code class="descname">LIST</code><em class="property"> = 18</em><a class="headerlink" href="#streamcorpus.EntityType.LIST" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.RELIGION">
+<code class="descname">RELIGION</code><em class="property"> = 19</em><a class="headerlink" href="#streamcorpus.EntityType.RELIGION" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.NATIONALITY">
+<code class="descname">NATIONALITY</code><em class="property"> = 20</em><a class="headerlink" href="#streamcorpus.EntityType.NATIONALITY" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.TITLE">
+<code class="descname">TITLE</code><em class="property"> = 21</em><a class="headerlink" href="#streamcorpus.EntityType.TITLE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.EntityType.EVENT">
+<code class="descname">EVENT</code><em class="property"> = 22</em><a class="headerlink" href="#streamcorpus.EntityType.EVENT" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.MentionType">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">MentionType</code><a class="reference internal" href="../_modules/streamcorpus/ttypes.html#MentionType"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.MentionType" title="Permalink to this definition">¶</a></dt>
+<dd><dl class="attribute">
+<dt id="streamcorpus.MentionType.NAME">
+<code class="descname">NAME</code><em class="property"> = 0</em><a class="headerlink" href="#streamcorpus.MentionType.NAME" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.MentionType.PRO">
+<code class="descname">PRO</code><em class="property"> = 1</em><a class="headerlink" href="#streamcorpus.MentionType.PRO" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.MentionType.NOM">
+<code class="descname">NOM</code><em class="property"> = 2</em><a class="headerlink" href="#streamcorpus.MentionType.NOM" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.Gender">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Gender</code><a class="reference internal" href="../_modules/streamcorpus/ttypes.html#Gender"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.Gender" title="Permalink to this definition">¶</a></dt>
+<dd><dl class="attribute">
+<dt id="streamcorpus.Gender.FEMALE">
+<code class="descname">FEMALE</code><em class="property"> = 0</em><a class="headerlink" href="#streamcorpus.Gender.FEMALE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.Gender.MALE">
+<code class="descname">MALE</code><em class="property"> = 1</em><a class="headerlink" href="#streamcorpus.Gender.MALE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.AttributeType">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">AttributeType</code><a class="reference internal" href="../_modules/streamcorpus/ttypes.html#AttributeType"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.AttributeType" title="Permalink to this definition">¶</a></dt>
+<dd><p>Attributes are based primarily on TAC KBP, see also saved in this directory
+<a class="reference external" href="http://surdeanu.info/kbp2013/TAC_2013_KBP_Slot_Descriptions_1.0.pdf">http://surdeanu.info/kbp2013/TAC_2013_KBP_Slot_Descriptions_1.0.pdf</a></p>
+<p>Only slots that are not resolvable to unique entities are listed
+here as attributes.  Most slots are relations, so see RelationType.</p>
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.PER_AGE">
+<code class="descname">PER_AGE</code><em class="property"> = 0</em><a class="headerlink" href="#streamcorpus.AttributeType.PER_AGE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.PER_GENDER">
+<code class="descname">PER_GENDER</code><em class="property"> = 1</em><a class="headerlink" href="#streamcorpus.AttributeType.PER_GENDER" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.PER_ALTERNATE_NAMES">
+<code class="descname">PER_ALTERNATE_NAMES</code><em class="property"> = 3</em><a class="headerlink" href="#streamcorpus.AttributeType.PER_ALTERNATE_NAMES" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.PER_CAUSE_OF_DEATH">
+<code class="descname">PER_CAUSE_OF_DEATH</code><em class="property"> = 4</em><a class="headerlink" href="#streamcorpus.AttributeType.PER_CAUSE_OF_DEATH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.PER_TITLE">
+<code class="descname">PER_TITLE</code><em class="property"> = 5</em><a class="headerlink" href="#streamcorpus.AttributeType.PER_TITLE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.PER_CHARGES">
+<code class="descname">PER_CHARGES</code><em class="property"> = 6</em><a class="headerlink" href="#streamcorpus.AttributeType.PER_CHARGES" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.ORG_ALTERNATE_NAMES">
+<code class="descname">ORG_ALTERNATE_NAMES</code><em class="property"> = 7</em><a class="headerlink" href="#streamcorpus.AttributeType.ORG_ALTERNATE_NAMES" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.AttributeType.ORG_NUMBER_OF_EMPLOYEES_MEMBERS">
+<code class="descname">ORG_NUMBER_OF_EMPLOYEES_MEMBERS</code><em class="property"> = 8</em><a class="headerlink" href="#streamcorpus.AttributeType.ORG_NUMBER_OF_EMPLOYEES_MEMBERS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.RelationType">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">RelationType</code><a class="reference internal" href="../_modules/streamcorpus/ttypes.html#RelationType"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.RelationType" title="Permalink to this definition">¶</a></dt>
+<dd><p>RelationType is used in Relation to map relation &#8220;name&#8221; to type.</p>
+<p>Relations 0 through 50 borrow from ACE with these string replacements:
+s/-// and s/./_/
+<a class="reference external" href="http://projects.ldc.upenn.edu/ace/docs/English-Events-Guidelines_v5.4.3.pdf">http://projects.ldc.upenn.edu/ace/docs/English-Events-Guidelines_v5.4.3.pdf</a></p>
+<p>Relations 51-  borrows from KBP slot filling
+<a class="reference external" href="http://surdeanu.info/kbp2013/TAC_2013_KBP_Slot_Descriptions_1.0.pdf">http://surdeanu.info/kbp2013/TAC_2013_KBP_Slot_Descriptions_1.0.pdf</a></p>
+<p>Most entity slots are relations, so the <a href="#id1"><span class="problematic" id="id2">PER_</span></a> and <a href="#id3"><span class="problematic" id="id4">ORG_</span></a> and <a href="#id5"><span class="problematic" id="id6">FAC_</span></a>
+relations listed below are primary for slot filling.</p>
+<p>Many of the KBP-based slots are redundant or overlapping with the
+ACE-based slots.  The KBP-based slots are generally simpler and
+were developed to support knowledge base population rather than
+single-document extraction (as ACE was).  Therefore, for KB-focused
+tasks, we recommend using the Relations 51-</p>
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PHYS_Located">
+<code class="descname">PHYS_Located</code><em class="property"> = 0</em><a class="headerlink" href="#streamcorpus.RelationType.PHYS_Located" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PHYS_Near">
+<code class="descname">PHYS_Near</code><em class="property"> = 1</em><a class="headerlink" href="#streamcorpus.RelationType.PHYS_Near" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PARTWHOLE_Geographical">
+<code class="descname">PARTWHOLE_Geographical</code><em class="property"> = 2</em><a class="headerlink" href="#streamcorpus.RelationType.PARTWHOLE_Geographical" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PARTWHOLE_Subsidiary">
+<code class="descname">PARTWHOLE_Subsidiary</code><em class="property"> = 3</em><a class="headerlink" href="#streamcorpus.RelationType.PARTWHOLE_Subsidiary" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PARTWHOLE_Artifact">
+<code class="descname">PARTWHOLE_Artifact</code><em class="property"> = 4</em><a class="headerlink" href="#streamcorpus.RelationType.PARTWHOLE_Artifact" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PERSOC_Business">
+<code class="descname">PERSOC_Business</code><em class="property"> = 5</em><a class="headerlink" href="#streamcorpus.RelationType.PERSOC_Business" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PERSOC_Family">
+<code class="descname">PERSOC_Family</code><em class="property"> = 6</em><a class="headerlink" href="#streamcorpus.RelationType.PERSOC_Family" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PERSOC_LastingPersonal">
+<code class="descname">PERSOC_LastingPersonal</code><em class="property"> = 7</em><a class="headerlink" href="#streamcorpus.RelationType.PERSOC_LastingPersonal" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORGAFF_Employment">
+<code class="descname">ORGAFF_Employment</code><em class="property"> = 8</em><a class="headerlink" href="#streamcorpus.RelationType.ORGAFF_Employment" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORGAFF_Ownership">
+<code class="descname">ORGAFF_Ownership</code><em class="property"> = 9</em><a class="headerlink" href="#streamcorpus.RelationType.ORGAFF_Ownership" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORGAFF_Founder">
+<code class="descname">ORGAFF_Founder</code><em class="property"> = 10</em><a class="headerlink" href="#streamcorpus.RelationType.ORGAFF_Founder" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORGAFF_StudentAlum">
+<code class="descname">ORGAFF_StudentAlum</code><em class="property"> = 11</em><a class="headerlink" href="#streamcorpus.RelationType.ORGAFF_StudentAlum" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORGAFF_SportsAffiliation">
+<code class="descname">ORGAFF_SportsAffiliation</code><em class="property"> = 12</em><a class="headerlink" href="#streamcorpus.RelationType.ORGAFF_SportsAffiliation" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORGAFF_InvestorShareholder">
+<code class="descname">ORGAFF_InvestorShareholder</code><em class="property"> = 13</em><a class="headerlink" href="#streamcorpus.RelationType.ORGAFF_InvestorShareholder" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORGAFF_Membership">
+<code class="descname">ORGAFF_Membership</code><em class="property"> = 14</em><a class="headerlink" href="#streamcorpus.RelationType.ORGAFF_Membership" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ART_UserOwnerInventorManufacturer">
+<code class="descname">ART_UserOwnerInventorManufacturer</code><em class="property"> = 15</em><a class="headerlink" href="#streamcorpus.RelationType.ART_UserOwnerInventorManufacturer" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.GENAFF_CitizenResidentReligionEthnicity">
+<code class="descname">GENAFF_CitizenResidentReligionEthnicity</code><em class="property"> = 16</em><a class="headerlink" href="#streamcorpus.RelationType.GENAFF_CitizenResidentReligionEthnicity" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.GENAFF_OrgLocation">
+<code class="descname">GENAFF_OrgLocation</code><em class="property"> = 17</em><a class="headerlink" href="#streamcorpus.RelationType.GENAFF_OrgLocation" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Business_DeclareBankruptcy">
+<code class="descname">Business_DeclareBankruptcy</code><em class="property"> = 18</em><a class="headerlink" href="#streamcorpus.RelationType.Business_DeclareBankruptcy" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Business_EndOrg">
+<code class="descname">Business_EndOrg</code><em class="property"> = 19</em><a class="headerlink" href="#streamcorpus.RelationType.Business_EndOrg" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Business_MergeOrg">
+<code class="descname">Business_MergeOrg</code><em class="property"> = 20</em><a class="headerlink" href="#streamcorpus.RelationType.Business_MergeOrg" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Business_StartOrg">
+<code class="descname">Business_StartOrg</code><em class="property"> = 21</em><a class="headerlink" href="#streamcorpus.RelationType.Business_StartOrg" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Conflict_Attack">
+<code class="descname">Conflict_Attack</code><em class="property"> = 22</em><a class="headerlink" href="#streamcorpus.RelationType.Conflict_Attack" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Conflict_Demonstrate">
+<code class="descname">Conflict_Demonstrate</code><em class="property"> = 23</em><a class="headerlink" href="#streamcorpus.RelationType.Conflict_Demonstrate" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Contact_PhoneWrite">
+<code class="descname">Contact_PhoneWrite</code><em class="property"> = 24</em><a class="headerlink" href="#streamcorpus.RelationType.Contact_PhoneWrite" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Contact_Meet">
+<code class="descname">Contact_Meet</code><em class="property"> = 25</em><a class="headerlink" href="#streamcorpus.RelationType.Contact_Meet" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Acquit">
+<code class="descname">Justice_Acquit</code><em class="property"> = 26</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Acquit" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Appeal">
+<code class="descname">Justice_Appeal</code><em class="property"> = 27</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Appeal" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_ArrestJail">
+<code class="descname">Justice_ArrestJail</code><em class="property"> = 28</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_ArrestJail" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_ChargeIndict">
+<code class="descname">Justice_ChargeIndict</code><em class="property"> = 29</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_ChargeIndict" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Convict">
+<code class="descname">Justice_Convict</code><em class="property"> = 30</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Convict" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Execute">
+<code class="descname">Justice_Execute</code><em class="property"> = 31</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Execute" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Extradite">
+<code class="descname">Justice_Extradite</code><em class="property"> = 32</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Extradite" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Fine">
+<code class="descname">Justice_Fine</code><em class="property"> = 33</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Fine" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Pardon">
+<code class="descname">Justice_Pardon</code><em class="property"> = 34</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Pardon" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_ReleaseParole">
+<code class="descname">Justice_ReleaseParole</code><em class="property"> = 35</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_ReleaseParole" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Sentence">
+<code class="descname">Justice_Sentence</code><em class="property"> = 36</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Sentence" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_Sue">
+<code class="descname">Justice_Sue</code><em class="property"> = 37</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_Sue" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Justice_TrialHearing">
+<code class="descname">Justice_TrialHearing</code><em class="property"> = 38</em><a class="headerlink" href="#streamcorpus.RelationType.Justice_TrialHearing" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Life_BeBorn">
+<code class="descname">Life_BeBorn</code><em class="property"> = 39</em><a class="headerlink" href="#streamcorpus.RelationType.Life_BeBorn" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Life_Die">
+<code class="descname">Life_Die</code><em class="property"> = 40</em><a class="headerlink" href="#streamcorpus.RelationType.Life_Die" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Life_Divorce">
+<code class="descname">Life_Divorce</code><em class="property"> = 41</em><a class="headerlink" href="#streamcorpus.RelationType.Life_Divorce" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Life_Injure">
+<code class="descname">Life_Injure</code><em class="property"> = 42</em><a class="headerlink" href="#streamcorpus.RelationType.Life_Injure" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Life_Marry">
+<code class="descname">Life_Marry</code><em class="property"> = 43</em><a class="headerlink" href="#streamcorpus.RelationType.Life_Marry" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Movement_Transport">
+<code class="descname">Movement_Transport</code><em class="property"> = 44</em><a class="headerlink" href="#streamcorpus.RelationType.Movement_Transport" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Personnel_Elect">
+<code class="descname">Personnel_Elect</code><em class="property"> = 45</em><a class="headerlink" href="#streamcorpus.RelationType.Personnel_Elect" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Personnel_EndPosition">
+<code class="descname">Personnel_EndPosition</code><em class="property"> = 46</em><a class="headerlink" href="#streamcorpus.RelationType.Personnel_EndPosition" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Personnel_Nominate">
+<code class="descname">Personnel_Nominate</code><em class="property"> = 47</em><a class="headerlink" href="#streamcorpus.RelationType.Personnel_Nominate" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Personnel_StartPosition">
+<code class="descname">Personnel_StartPosition</code><em class="property"> = 48</em><a class="headerlink" href="#streamcorpus.RelationType.Personnel_StartPosition" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Transaction_TransferMoney">
+<code class="descname">Transaction_TransferMoney</code><em class="property"> = 49</em><a class="headerlink" href="#streamcorpus.RelationType.Transaction_TransferMoney" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.Transaction_TransferOwnership">
+<code class="descname">Transaction_TransferOwnership</code><em class="property"> = 50</em><a class="headerlink" href="#streamcorpus.RelationType.Transaction_TransferOwnership" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_DATE_OF_BIRTH">
+<code class="descname">PER_DATE_OF_BIRTH</code><em class="property"> = 51</em><a class="headerlink" href="#streamcorpus.RelationType.PER_DATE_OF_BIRTH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_COUNTRY_OF_BIRTH">
+<code class="descname">PER_COUNTRY_OF_BIRTH</code><em class="property"> = 52</em><a class="headerlink" href="#streamcorpus.RelationType.PER_COUNTRY_OF_BIRTH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_STATEORPROVINCE_OF_BIRTH">
+<code class="descname">PER_STATEORPROVINCE_OF_BIRTH</code><em class="property"> = 53</em><a class="headerlink" href="#streamcorpus.RelationType.PER_STATEORPROVINCE_OF_BIRTH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_CITY_OF_BIRTH">
+<code class="descname">PER_CITY_OF_BIRTH</code><em class="property"> = 54</em><a class="headerlink" href="#streamcorpus.RelationType.PER_CITY_OF_BIRTH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_ORIGIN">
+<code class="descname">PER_ORIGIN</code><em class="property"> = 55</em><a class="headerlink" href="#streamcorpus.RelationType.PER_ORIGIN" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_DATE_OF_DEATH">
+<code class="descname">PER_DATE_OF_DEATH</code><em class="property"> = 56</em><a class="headerlink" href="#streamcorpus.RelationType.PER_DATE_OF_DEATH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_COUNTRY_OF_DEATH">
+<code class="descname">PER_COUNTRY_OF_DEATH</code><em class="property"> = 57</em><a class="headerlink" href="#streamcorpus.RelationType.PER_COUNTRY_OF_DEATH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_STATEORPROVINCE_OF_DEATH">
+<code class="descname">PER_STATEORPROVINCE_OF_DEATH</code><em class="property"> = 58</em><a class="headerlink" href="#streamcorpus.RelationType.PER_STATEORPROVINCE_OF_DEATH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_CITY_OF_DEATH">
+<code class="descname">PER_CITY_OF_DEATH</code><em class="property"> = 59</em><a class="headerlink" href="#streamcorpus.RelationType.PER_CITY_OF_DEATH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_COUNTRIES_OF_RESIDENCE">
+<code class="descname">PER_COUNTRIES_OF_RESIDENCE</code><em class="property"> = 60</em><a class="headerlink" href="#streamcorpus.RelationType.PER_COUNTRIES_OF_RESIDENCE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_STATESORPROVINCES_OF_RESIDENCE">
+<code class="descname">PER_STATESORPROVINCES_OF_RESIDENCE</code><em class="property"> = 61</em><a class="headerlink" href="#streamcorpus.RelationType.PER_STATESORPROVINCES_OF_RESIDENCE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_CITIES_OF_RESIDENCE">
+<code class="descname">PER_CITIES_OF_RESIDENCE</code><em class="property"> = 62</em><a class="headerlink" href="#streamcorpus.RelationType.PER_CITIES_OF_RESIDENCE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_SCHOOLS_ATTENDED">
+<code class="descname">PER_SCHOOLS_ATTENDED</code><em class="property"> = 63</em><a class="headerlink" href="#streamcorpus.RelationType.PER_SCHOOLS_ATTENDED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_EMPLOYEE_OR_MEMBER_OF">
+<code class="descname">PER_EMPLOYEE_OR_MEMBER_OF</code><em class="property"> = 64</em><a class="headerlink" href="#streamcorpus.RelationType.PER_EMPLOYEE_OR_MEMBER_OF" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_RELIGION">
+<code class="descname">PER_RELIGION</code><em class="property"> = 65</em><a class="headerlink" href="#streamcorpus.RelationType.PER_RELIGION" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_SPOUSE">
+<code class="descname">PER_SPOUSE</code><em class="property"> = 66</em><a class="headerlink" href="#streamcorpus.RelationType.PER_SPOUSE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_CHILDREN">
+<code class="descname">PER_CHILDREN</code><em class="property"> = 67</em><a class="headerlink" href="#streamcorpus.RelationType.PER_CHILDREN" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_PARENTS">
+<code class="descname">PER_PARENTS</code><em class="property"> = 68</em><a class="headerlink" href="#streamcorpus.RelationType.PER_PARENTS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_SIBLINGS">
+<code class="descname">PER_SIBLINGS</code><em class="property"> = 69</em><a class="headerlink" href="#streamcorpus.RelationType.PER_SIBLINGS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_OTHER_FAMILY">
+<code class="descname">PER_OTHER_FAMILY</code><em class="property"> = 70</em><a class="headerlink" href="#streamcorpus.RelationType.PER_OTHER_FAMILY" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_TOP_MEMBERS_EMPLOYEES">
+<code class="descname">ORG_TOP_MEMBERS_EMPLOYEES</code><em class="property"> = 71</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_TOP_MEMBERS_EMPLOYEES" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_MEMBERS">
+<code class="descname">ORG_MEMBERS</code><em class="property"> = 72</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_MEMBERS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_MEMBER_OF">
+<code class="descname">ORG_MEMBER_OF</code><em class="property"> = 73</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_MEMBER_OF" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_SUBSIDIARIES">
+<code class="descname">ORG_SUBSIDIARIES</code><em class="property"> = 74</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_SUBSIDIARIES" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_PARENTS">
+<code class="descname">ORG_PARENTS</code><em class="property"> = 75</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_PARENTS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_FOUNDED_BY">
+<code class="descname">ORG_FOUNDED_BY</code><em class="property"> = 76</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_FOUNDED_BY" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_DATE_FOUNDED">
+<code class="descname">ORG_DATE_FOUNDED</code><em class="property"> = 77</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_DATE_FOUNDED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_DATE_DISSOLVED">
+<code class="descname">ORG_DATE_DISSOLVED</code><em class="property"> = 78</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_DATE_DISSOLVED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_COUNTRY_OF_HEADQUARTERS">
+<code class="descname">ORG_COUNTRY_OF_HEADQUARTERS</code><em class="property"> = 79</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_COUNTRY_OF_HEADQUARTERS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_STATEORPROVINCE_OF_HEADQUARTERS">
+<code class="descname">ORG_STATEORPROVINCE_OF_HEADQUARTERS</code><em class="property"> = 80</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_STATEORPROVINCE_OF_HEADQUARTERS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_CITY_OF_HEADQUARTERS">
+<code class="descname">ORG_CITY_OF_HEADQUARTERS</code><em class="property"> = 81</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_CITY_OF_HEADQUARTERS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_SHAREHOLDERS">
+<code class="descname">ORG_SHAREHOLDERS</code><em class="property"> = 82</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_SHAREHOLDERS" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_POLITICAL_OR_RELIGIOUS_AFFILIATION">
+<code class="descname">ORG_POLITICAL_OR_RELIGIOUS_AFFILIATION</code><em class="property"> = 83</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_POLITICAL_OR_RELIGIOUS_AFFILIATION" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_WEBSITE">
+<code class="descname">ORG_WEBSITE</code><em class="property"> = 84</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_WEBSITE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.FAC_LOCATED">
+<code class="descname">FAC_LOCATED</code><em class="property"> = 85</em><a class="headerlink" href="#streamcorpus.RelationType.FAC_LOCATED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.FAC_VISITED_BY">
+<code class="descname">FAC_VISITED_BY</code><em class="property"> = 86</em><a class="headerlink" href="#streamcorpus.RelationType.FAC_VISITED_BY" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.FAC_OWNER">
+<code class="descname">FAC_OWNER</code><em class="property"> = 87</em><a class="headerlink" href="#streamcorpus.RelationType.FAC_OWNER" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_WON_AWARD">
+<code class="descname">PER_WON_AWARD</code><em class="property"> = 88</em><a class="headerlink" href="#streamcorpus.RelationType.PER_WON_AWARD" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_MET_WITH">
+<code class="descname">PER_MET_WITH</code><em class="property"> = 89</em><a class="headerlink" href="#streamcorpus.RelationType.PER_MET_WITH" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_ATTENDED">
+<code class="descname">PER_ATTENDED</code><em class="property"> = 90</em><a class="headerlink" href="#streamcorpus.RelationType.PER_ATTENDED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_VISITED">
+<code class="descname">PER_VISITED</code><em class="property"> = 91</em><a class="headerlink" href="#streamcorpus.RelationType.PER_VISITED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_ATTENDED">
+<code class="descname">ORG_ATTENDED</code><em class="property"> = 92</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_ATTENDED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.ORG_VISITED">
+<code class="descname">ORG_VISITED</code><em class="property"> = 93</em><a class="headerlink" href="#streamcorpus.RelationType.ORG_VISITED" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_WEBSITE">
+<code class="descname">PER_WEBSITE</code><em class="property"> = 94</em><a class="headerlink" href="#streamcorpus.RelationType.PER_WEBSITE" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus.RelationType.PER_NATIONALITY">
+<code class="descname">PER_NATIONALITY</code><em class="property"> = 95</em><a class="headerlink" href="#streamcorpus.RelationType.PER_NATIONALITY" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</dd></dl>
+
+</div>
+<div class="section" id="storage">
+<h2>2.2. Storage<a class="headerlink" href="#storage" title="Permalink to this headline">¶</a></h2>
+<p>There are a number of helpers to assist with binary serialization and deserialization.</p>
+<dl class="class">
+<dt id="streamcorpus.Chunk">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">Chunk</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#Chunk"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.Chunk" title="Permalink to this definition">¶</a></dt>
+<dd><p>Chunk, the default Chunk, is a Thrift Chunk.
+See also PickleChunk, JsonChunk, and CborChunk</p>
+<dl class="method">
+<dt id="streamcorpus.Chunk.write_msg_impl">
+<code class="descname">write_msg_impl</code><span class="sig-paren">(</span><em>msg</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#Chunk.write_msg_impl"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.Chunk.write_msg_impl" title="Permalink to this definition">¶</a></dt>
+<dd><p>add message instance to chunk</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus.Chunk.flush">
+<code class="descname">flush</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#Chunk.flush"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.Chunk.flush" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus.Chunk.close">
+<code class="descname">close</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#Chunk.close"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.Chunk.close" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus.Chunk.read_msg_impl">
+<code class="descname">read_msg_impl</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#Chunk.read_msg_impl"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.Chunk.read_msg_impl" title="Permalink to this definition">¶</a></dt>
+<dd><p>Iterator over messages in the chunk</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.decrypt_and_uncompress">
+<code class="descclassname">streamcorpus.</code><code class="descname">decrypt_and_uncompress</code><span class="sig-paren">(</span><em>data</em>, <em>gpg_private=None</em>, <em>tmp_dir=None</em>, <em>compression='xz'</em>, <em>detect_compression=True</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#decrypt_and_uncompress"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.decrypt_and_uncompress" title="Permalink to this definition">¶</a></dt>
+<dd><p>Given a data buffer of bytes, if gpg_key_path is provided, decrypt
+data using gnupg, and uncompress using <cite>compression</cite> scheme, which
+defaults to &#8220;xz&#8221; and can also be &#8220;gz&#8221;, &#8220;sz&#8221;, or &#8220;&#8221;.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Returns:</th><td class="field-body">a tuple of (logs, data), where <cite>logs</cite> is an array of
+strings and data is a binary string</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.compress_and_encrypt">
+<code class="descclassname">streamcorpus.</code><code class="descname">compress_and_encrypt</code><span class="sig-paren">(</span><em>data</em>, <em>gpg_public=None</em>, <em>gpg_recipient='trec-kba'</em>, <em>tmp_dir=None</em>, <em>compression='xz'</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#compress_and_encrypt"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.compress_and_encrypt" title="Permalink to this definition">¶</a></dt>
+<dd><p>Given a data buffer of bytes compress it using the <cite>compression</cite>
+scheme, if gpg_public is provided, encrypt data using gnupg.
+Compression can be &#8220;xz&#8221;, &#8220;sz&#8221;, &#8220;gz&#8221;, or &#8220;&#8221;</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.compress_and_encrypt_path">
+<code class="descclassname">streamcorpus.</code><code class="descname">compress_and_encrypt_path</code><span class="sig-paren">(</span><em>path</em>, <em>gpg_public=None</em>, <em>gpg_recipient='trec-kba'</em>, <em>compression='xz'</em>, <em>tmp_dir='/tmp'</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#compress_and_encrypt_path"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.compress_and_encrypt_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Given a path in the local file system, compress it using
+<cite>compression</cite>, which defaults to &#8220;xz&#8221;, if gpg_public is provided,
+encrypt data using gnupg.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><strong>compression</strong> &#8211; can be either &#8220;xz&#8221;, &#8220;sz&#8221;, or &#8220;&#8221;</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body">path to file to a new file containing the of encrypted,</td>
+</tr>
+</tbody>
+</table>
+<div class="system-message">
+<p class="system-message-title">System Message: WARNING/2 (<tt class="docutils">/home/jrf/ve12/local/lib/python2.7/site-packages/streamcorpus/_chunk.py:docstring of streamcorpus.compress_and_encrypt_path</tt>, line 8)</p>
+Field list ends without a blank line; unexpected unindent.</div>
+<p>compressed data</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Return type:</th><td class="field-body"><a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)">str</a></td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.serialize">
+<code class="descclassname">streamcorpus.</code><code class="descname">serialize</code><span class="sig-paren">(</span><em>msg</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#serialize"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.serialize" title="Permalink to this definition">¶</a></dt>
+<dd><p>Generate a serialized binary blob for a single message</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.deserialize">
+<code class="descclassname">streamcorpus.</code><code class="descname">deserialize</code><span class="sig-paren">(</span><em>blob</em>, <em>message=&lt;class 'streamcorpus.ttypes.StreamItem'&gt;</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#deserialize"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.deserialize" title="Permalink to this definition">¶</a></dt>
+<dd><p>Generate a msg from a serialized binary blob for a single msg</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus.VersionMismatchError">
+<em class="property">class </em><code class="descclassname">streamcorpus.</code><code class="descname">VersionMismatchError</code><a class="reference internal" href="../_modules/streamcorpus/_chunk.html#VersionMismatchError"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.VersionMismatchError" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="http://docs.python.org/library/exceptions.html#exceptions.Exception" title="(in Python v2.7)"><code class="xref py py-class docutils literal"><span class="pre">exceptions.Exception</span></code></a></p>
+<p>The version of a stream item is not what was expected.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.get_date_hour">
+<code class="descclassname">streamcorpus.</code><code class="descname">get_date_hour</code><span class="sig-paren">(</span><em>stream_thing</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/package_globals.html#get_date_hour"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.get_date_hour" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns a date_hour string in the format &#8216;2000-01-01-12&#8217;
+:param stream_time: a StreamTime or StreamItem object</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.make_stream_time">
+<code class="descclassname">streamcorpus.</code><code class="descname">make_stream_time</code><span class="sig-paren">(</span><em>zulu_timestamp=None</em>, <em>epoch_ticks=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/package_globals.html#make_stream_time"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.make_stream_time" title="Permalink to this definition">¶</a></dt>
+<dd><p>Creates a StreamTime object from either a string or a unix-time number.
+string should be formatted like &#8216;2000-01-01T12:34:00.000123Z&#8217;
+zulu_timestamp can be either a string or a number
+epoch_ticks must be int, long, or float
+zulu_timestamp is type detected so that it can be passed through from the sole zulu_timestamp parameter of make_stream_item() below</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.make_stream_item">
+<code class="descclassname">streamcorpus.</code><code class="descname">make_stream_item</code><span class="sig-paren">(</span><em>zulu_timestamp</em>, <em>abs_url</em>, <em>version=1</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/package_globals.html#make_stream_item"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.make_stream_item" title="Permalink to this definition">¶</a></dt>
+<dd><p>Assemble a minimal StreamItem with internally consistent
+.stream_time.zulu_timestamp, .stream_time.epoch_ticks, .abs_url,
+.doc_id, and .stream_id</p>
+<p>zulu_timestamp may be either a unix-time number or a string like &#8216;2000-01-01T12:34:00.000123Z&#8217;</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.add_annotation">
+<code class="descclassname">streamcorpus.</code><code class="descname">add_annotation</code><span class="sig-paren">(</span><em>data_item</em>, <em>*annotations</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/package_globals.html#add_annotation"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.add_annotation" title="Permalink to this definition">¶</a></dt>
+<dd><p>adds each item in annotations to data_item.labels or .ratings</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus.get_entity_type">
+<code class="descclassname">streamcorpus.</code><code class="descname">get_entity_type</code><span class="sig-paren">(</span><em>tok</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus/package_globals.html#get_entity_type"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus.get_entity_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>returns the string name of the EntityType on this token, or None
+if it is not set.  If Token.entity_type == CUSTOM_TYPE, then this
+returns the Token.custom_entity_type string instead of
+streamcorpus.EntityType._VALUES_TO_NAMES</p>
+</dd></dl>
+
+</div>
+<div class="section" id="streamcorpus-dump-tool">
+<h2>2.3. <strong class="program">streamcorpus_dump</strong> tool<a class="headerlink" href="#streamcorpus-dump-tool" title="Permalink to this headline">¶</a></h2>
+<p><strong class="program">streamcorpus_dump</strong> prints information on a
+<a class="reference internal" href="#streamcorpus.Chunk" title="streamcorpus.Chunk"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.Chunk</span></code></a> file.  Basic usage is:</p>
+<div class="highlight-bash"><div class="highlight"><pre>streamcorpus_dump --show-all input.sc
+</pre></div>
+</div>
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="../index.html">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">2. <code class="docutils literal"><span class="pre">streamcorpus</span></code> &#8212; single-document data representation</a><ul>
+<li><a class="reference internal" href="#stream-items">2.1. Stream items</a></li>
+<li><a class="reference internal" href="#storage">2.2. Storage</a></li>
+<li><a class="reference internal" href="#streamcorpus-dump-tool">2.3. <strong class="program">streamcorpus_dump</strong> tool</a></li>
+</ul>
+</li>
+</ul>
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="overview.html"
+                        title="previous chapter">1. Overview of StreamCorpus software components</a></p>
+  <h4>Next topic</h4>
+  <p class="topless"><a href="streamcorpus_pipeline.html"
+                        title="next chapter">3. <code class="docutils literal"><span class="pre">streamcorpus_pipeline</span></code> &#8212; stream item processing framework</a></p>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/sphinx-docs/streamcorpus.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="streamcorpus_pipeline.html" title="3. streamcorpus_pipeline — stream item processing framework"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="overview.html" title="1. Overview of StreamCorpus software components"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

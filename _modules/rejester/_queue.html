@@ -1,0 +1,457 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>rejester._queue &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for rejester._queue</h1><div class="highlight"><pre>
+<span class="sd">&quot;&quot;&quot;Redis-based distributed priority queue.</span>
+
+<span class="sd">Purpose</span>
+<span class="sd">=======</span>
+
+<span class="sd">``RejesterQueue`` provides a priority queue, where string values can</span>
+<span class="sd">be inserted with some priority.  Items can be pulled from the queue in</span>
+<span class="sd">priority order, and must be returned to the queue within some time</span>
+<span class="sd">limit.  A queue item can also reserve other queue items, preventing</span>
+<span class="sd">them from being checked out or reserved until the main item finishes.</span>
+
+<span class="sd">Implementation Details</span>
+<span class="sd">======================</span>
+
+
+<span class="sd">This software is released under an MIT/X11 open source license.</span>
+
+<span class="sd">Copyright 2014 Diffeo, Inc.</span>
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="kn">import</span> <span class="nn">redis</span>
+
+<span class="kn">from</span> <span class="nn">rejester.exceptions</span> <span class="kn">import</span> <span class="n">ItemInUseError</span><span class="p">,</span> <span class="n">LostLease</span>
+<span class="kn">from</span> <span class="nn">rejester._redis</span> <span class="kn">import</span> <span class="n">RedisBase</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<div class="viewcode-block" id="RejesterQueue"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.RejesterQueue">[docs]</a><span class="k">class</span> <span class="nc">RejesterQueue</span><span class="p">(</span><span class="n">RedisBase</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;A Redis-based priority queue.</span>
+
+<span class="sd">    Queue items should generally be (short) strings.  Each item has</span>
+<span class="sd">    some associated priority.  ``check_out_item()`` will return some</span>
+<span class="sd">    item with the highest available priority.  The item must be</span>
+<span class="sd">    ``renew_item()`` or ``return_item()`` within a specified</span>
+<span class="sd">    expiration limit, or the item will be lost and may be given to</span>
+<span class="sd">    another client.</span>
+
+<span class="sd">    If you have a queue item checked out, you may also reserve other</span>
+<span class="sd">    queue items.  This prevents other clients from checking out or</span>
+<span class="sd">    reserving these items.  When you return the main queue item, or if</span>
+<span class="sd">    your check out expires, reserved items will be released.</span>
+
+<span class="sd">    Since the queue is based on Redis, there may be multiple queue</span>
+<span class="sd">    clients on the same queue on different systems.  Each ``RejesterQueue``</span>
+<span class="sd">    instance has a distinct worker ID, held in the ``worker_id`` property.</span>
+<span class="sd">    You can manually specify it in the constructor or manually set it;</span>
+<span class="sd">    otherwise, a unique ID will be obtained via the database on first use.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">worker_id</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Initialize the queue using a configuration object.</span>
+
+<span class="sd">        ``config`` should be a dictionary with the following keys:</span>
+
+<span class="sd">        ``registry_addresses``</span>
+<span class="sd">          list of ``host:port`` for the Redis server(s)</span>
+<span class="sd">        ``app_name``</span>
+<span class="sd">          application name (set to &quot;queue&quot; if not provided)</span>
+<span class="sd">        ``namespace``</span>
+<span class="sd">          application invocation namespace name (should be unique per run)</span>
+
+<span class="sd">        ``name`` is the name of the queue.  If ``worker_id`` is specified</span>
+<span class="sd">        it sets the worker ID, otherwise the database will be used to get</span>
+<span class="sd">        a unique one on first use.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">config</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s">&#39;app_name&#39;</span><span class="p">,</span> <span class="s">&#39;queue&#39;</span><span class="p">)</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">RejesterQueue</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_worker_id</span> <span class="o">=</span> <span class="n">worker_id</span>
+
+    <span class="k">def</span> <span class="nf">_conn</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Get a new redis connection.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">redis</span><span class="o">.</span><span class="n">StrictRedis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+
+    <span class="c"># key name construction</span>
+    <span class="k">def</span> <span class="nf">_key_worker</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="s">&#39;worker&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_key_for</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">+</span> <span class="n">k</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_key_available</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_for</span><span class="p">(</span><span class="s">&#39;_AVAILABLE&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_key_priorities</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_for</span><span class="p">(</span><span class="s">&#39;_PRIORITIES&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_key_expiration</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_for</span><span class="p">(</span><span class="s">&#39;_EXPIRATION&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_key_workers</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_for</span><span class="p">(</span><span class="s">&#39;_WORKERS&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_key_reservations</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i</span><span class="p">):</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_for</span><span class="p">(</span><span class="s">&#39;_RESERVATIONS_&#39;</span> <span class="o">+</span> <span class="n">i</span><span class="p">)</span>
+
+<div class="viewcode-block" id="RejesterQueue.dump_queue"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.RejesterQueue.dump_queue">[docs]</a>    <span class="k">def</span> <span class="nf">dump_queue</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">names</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Debug-log some of the queues.</span>
+
+<span class="sd">        ``names`` may include any of &quot;worker&quot;, &quot;available&quot;, &quot;priorities&quot;,</span>
+<span class="sd">        &quot;expiration&quot;, &quot;workers&quot;, or &quot;reservations_ITEM&quot; filling in some</span>
+<span class="sd">        specific item.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">StrictRedis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">names</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">name</span> <span class="o">==</span> <span class="s">&#39;worker&#39;</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;last worker: &#39;</span> <span class="o">+</span> <span class="n">conn</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_worker</span><span class="p">()))</span>
+            <span class="k">elif</span> <span class="n">name</span> <span class="o">==</span> <span class="s">&#39;available&#39;</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;available: &#39;</span> <span class="o">+</span>
+                             <span class="nb">str</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">zrevrange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_available</span><span class="p">(),</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+                                                <span class="n">withscores</span><span class="o">=</span><span class="bp">True</span><span class="p">)))</span>
+            <span class="k">elif</span> <span class="n">name</span> <span class="o">==</span> <span class="s">&#39;priorities&#39;</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;priorities: &#39;</span> <span class="o">+</span>
+                             <span class="nb">str</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">hgetall</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_priorities</span><span class="p">())))</span>
+            <span class="k">elif</span> <span class="n">name</span> <span class="o">==</span> <span class="s">&#39;expiration&#39;</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;expiration: &#39;</span> <span class="o">+</span>
+                             <span class="nb">str</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">zrevrange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_expiration</span><span class="p">(),</span> <span class="mi">0</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+                                                <span class="n">withscores</span><span class="o">=</span><span class="bp">True</span><span class="p">)))</span>
+            <span class="k">elif</span> <span class="n">name</span> <span class="o">==</span> <span class="s">&#39;workers&#39;</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;workers: &#39;</span> <span class="o">+</span>
+                             <span class="nb">str</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">hgetall</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_workers</span><span class="p">())))</span>
+            <span class="k">elif</span> <span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s">&#39;reservations_&#39;</span><span class="p">):</span>
+                <span class="n">item</span> <span class="o">=</span> <span class="n">name</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="s">&#39;reservations_&#39;</span><span class="p">):]</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;reservations for &#39;</span> <span class="o">+</span> <span class="n">item</span> <span class="o">+</span> <span class="s">&#39;: &#39;</span> <span class="o">+</span>
+                             <span class="nb">str</span><span class="p">(</span><span class="n">conn</span><span class="o">.</span><span class="n">smembers</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_reservations</span><span class="p">(</span><span class="n">item</span><span class="p">))))</span>
+</div>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">worker_id</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;A unique identifier for this queue instance and the items it owns.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_worker_id</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span> <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_worker_id</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_worker_id</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_conn</span><span class="p">())</span>
+    <span class="nd">@worker_id.setter</span>
+    <span class="k">def</span> <span class="nf">worker_id</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">w</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Set the worker ID for this queue instance.</span>
+
+<span class="sd">        If this is set to None, the property will be reset to a unique</span>
+<span class="sd">        worker ID on next use.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_worker_id</span> <span class="o">=</span> <span class="n">w</span>
+
+    <span class="k">def</span> <span class="nf">_get_worker_id</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">conn</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Get the worker ID, using a preestablished connection.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_worker_id</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_worker_id</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">incr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_worker</span><span class="p">())</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_worker_id</span>
+
+<div class="viewcode-block" id="RejesterQueue.add_item"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.RejesterQueue.add_item">[docs]</a>    <span class="k">def</span> <span class="nf">add_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">priority</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Add ``item`` to this queue.</span>
+
+<span class="sd">        It will have the specified ``priority`` (highest priority runs</span>
+<span class="sd">        first).  If it is already in the queue, fail if it is checked</span>
+<span class="sd">        out or reserved, or change its priority to ``priority``</span>
+<span class="sd">        otherwise.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_conn</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_run_expiration</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
+<span class="s">        if (redis.call(&quot;hexists&quot;, KEYS[2], ARGV[1]) ~= 0) and</span>
+<span class="s">           not(redis.call(&quot;zscore&quot;, KEYS[1], ARGV[1]))</span>
+<span class="s">        then</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        redis.call(&quot;zadd&quot;, KEYS[1], ARGV[2], ARGV[1])</span>
+<span class="s">        redis.call(&quot;hset&quot;, KEYS[2], ARGV[1], ARGV[2])</span>
+<span class="s">        return 0</span>
+<span class="s">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_available</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_priorities</span><span class="p">()],</span>
+                        <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">item</span><span class="p">,</span> <span class="n">priority</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">result</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ItemInUseError</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        <span class="k">return</span>
+</div>
+<div class="viewcode-block" id="RejesterQueue.check_out_item"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.RejesterQueue.check_out_item">[docs]</a>    <span class="k">def</span> <span class="nf">check_out_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">expiration</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Get the highest-priority item out of this queue.</span>
+
+<span class="sd">        Returns the item, or None if no items are available.  The item</span>
+<span class="sd">        must be either ``return_item()`` or ``renew_item()`` before</span>
+<span class="sd">        ``expiration`` seconds pass, or it will become available to</span>
+<span class="sd">        future callers.  The item will be marked as being owned by</span>
+<span class="sd">        ``worker_id``.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">StrictRedis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_run_expiration</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+        <span class="n">expiration</span> <span class="o">+=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
+<span class="s">        local item = redis.call(&quot;zrevrange&quot;, KEYS[1], 0, 0)</span>
+<span class="s">        if #item == 0 then return nil end</span>
+<span class="s">        item = item[1]</span>
+<span class="s">        redis.call(&quot;zrem&quot;, KEYS[1], item)</span>
+<span class="s">        redis.call(&quot;zadd&quot;, KEYS[2], ARGV[1], item)</span>
+<span class="s">        redis.call(&quot;hset&quot;, KEYS[3], &quot;i&quot; .. item, &quot;w&quot; .. ARGV[2])</span>
+<span class="s">        redis.call(&quot;hset&quot;, KEYS[3], &quot;w&quot; .. ARGV[2], &quot;i&quot; .. item)</span>
+<span class="s">        return item</span>
+<span class="s">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_available</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_expiration</span><span class="p">(),</span>
+                              <span class="bp">self</span><span class="o">.</span><span class="n">_key_workers</span><span class="p">()],</span>
+                        <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">expiration</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_worker_id</span><span class="p">(</span><span class="n">conn</span><span class="p">)])</span>
+        <span class="k">return</span> <span class="n">result</span>
+</div>
+<div class="viewcode-block" id="RejesterQueue.renew_item"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.RejesterQueue.renew_item">[docs]</a>    <span class="k">def</span> <span class="nf">renew_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">expiration</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Update the expiration time for ``item``.</span>
+
+<span class="sd">        The item will remain checked out for ``expiration`` seconds</span>
+<span class="sd">        beyond the current time.  This queue instance must have</span>
+<span class="sd">        already checked out ``item``, and this method can fail if</span>
+<span class="sd">        ``item`` is already overdue.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_conn</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_run_expiration</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+        <span class="n">expiration</span> <span class="o">+=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
+<span class="s">        -- already expired?</span>
+<span class="s">        if redis.call(&quot;hget&quot;, KEYS[2], &quot;i&quot; .. ARGV[1]) ~= &quot;w&quot; .. ARGV[3]</span>
+<span class="s">        then return -1 end</span>
+
+<span class="s">        -- otherwise just update the expiration</span>
+<span class="s">        redis.call(&quot;zadd&quot;, KEYS[1], ARGV[2], ARGV[1])</span>
+<span class="s">        return 0</span>
+<span class="s">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_expiration</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_workers</span><span class="p">()],</span>
+                        <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">item</span><span class="p">,</span> <span class="n">expiration</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_worker_id</span><span class="p">(</span><span class="n">conn</span><span class="p">)])</span>
+        <span class="k">if</span> <span class="n">result</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">LostLease</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        <span class="k">return</span>
+</div>
+<div class="viewcode-block" id="RejesterQueue.return_item"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.RejesterQueue.return_item">[docs]</a>    <span class="k">def</span> <span class="nf">return_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">priority</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Complete work on an item from ``check_out_item()``.</span>
+
+<span class="sd">        If this instance no longer owns ``item``, raise ``LostLease``.</span>
+<span class="sd">        If ``priority`` is None, the item is removed from the queue;</span>
+<span class="sd">        otherwise it is re-added with the specified priority.  Any</span>
+<span class="sd">        locked items associated with this item are unlocked.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">StrictRedis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_run_expiration</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
+<span class="s">        -- expired?</span>
+<span class="s">        if redis.call(&quot;hget&quot;, KEYS[4], &quot;i&quot; .. ARGV[1]) ~= &quot;w&quot; .. ARGV[3]</span>
+<span class="s">        then return -1 end</span>
+
+<span class="s">        -- will no longer expire</span>
+<span class="s">        redis.call(&quot;zrem&quot;, KEYS[2], ARGV[1])</span>
+<span class="s">        -- update priority, readd to available list</span>
+<span class="s">        if ARGV[2] == &quot;None&quot;</span>
+<span class="s">        then</span>
+<span class="s">          redis.call(&quot;hdel&quot;, KEYS[3], ARGV[1])</span>
+<span class="s">        else</span>
+<span class="s">          redis.call(&quot;hset&quot;, KEYS[3], ARGV[1], ARGV[2])</span>
+<span class="s">          redis.call(&quot;zadd&quot;, KEYS[1], ARGV[2], ARGV[1])</span>
+<span class="s">        end</span>
+<span class="s">        -- release all reservations</span>
+<span class="s">        local reservations = redis.call(&quot;smembers&quot;, KEYS[5])</span>
+<span class="s">        for i = 1, #reservations do</span>
+<span class="s">          local item = reservations[i]</span>
+<span class="s">          local pri = redis.call(&quot;hget&quot;, KEYS[3], item)</span>
+<span class="s">          redis.call(&quot;zadd&quot;, KEYS[1], pri, item)</span>
+<span class="s">        end</span>
+<span class="s">        -- clear out workers</span>
+<span class="s">        redis.call(&quot;hdel&quot;, KEYS[4], &quot;i&quot; .. ARGV[1])</span>
+<span class="s">        redis.call(&quot;hdel&quot;, KEYS[4], &quot;w&quot; .. ARGV[3])</span>
+<span class="s">        </span>
+<span class="s">        return 0</span>
+<span class="s">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="c"># work around python -&gt; redis -&gt; lua marshaling</span>
+        <span class="k">if</span> <span class="n">priority</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span> <span class="n">priority</span> <span class="o">=</span> <span class="s">&quot;None&quot;</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_available</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_expiration</span><span class="p">(),</span>
+                              <span class="bp">self</span><span class="o">.</span><span class="n">_key_priorities</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_workers</span><span class="p">(),</span>
+                              <span class="bp">self</span><span class="o">.</span><span class="n">_key_reservations</span><span class="p">(</span><span class="n">item</span><span class="p">)],</span>
+                        <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">item</span><span class="p">,</span> <span class="n">priority</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_worker_id</span><span class="p">(</span><span class="n">conn</span><span class="p">)])</span>
+        <span class="k">if</span> <span class="n">result</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span> <span class="k">raise</span> <span class="n">LostLease</span><span class="p">(</span><span class="n">item</span><span class="p">)</span>
+        <span class="k">return</span>
+</div>
+<div class="viewcode-block" id="RejesterQueue.reserve_items"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.RejesterQueue.reserve_items">[docs]</a>    <span class="k">def</span> <span class="nf">reserve_items</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent_item</span><span class="p">,</span> <span class="o">*</span><span class="n">items</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Reserve a set of items until a parent item is returned.</span>
+
+<span class="sd">        Prevent ``check_out_item()`` from returning any of ``items``</span>
+<span class="sd">        until ``parent_item`` is completed or times out.  For each</span>
+<span class="sd">        item, if it is not already checked out or reserved by some</span>
+<span class="sd">        other parent item, it is associated with ``parent_item``, and</span>
+<span class="sd">        the reservation will be released when ``parent_item``</span>
+<span class="sd">        completes or times out.  Returns a list that is a subset of</span>
+<span class="sd">        ``items`` for which we could get the reservation.</span>
+
+<span class="sd">        Raises ``LostLease`` if this queue instance no longer owns</span>
+<span class="sd">        ``parent_item``.  If any of the items do not exist, they are</span>
+<span class="sd">        silently ignored.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">StrictRedis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_run_expiration</span><span class="p">(</span><span class="n">conn</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
+<span class="s">        -- expired?</span>
+<span class="s">        if redis.call(&quot;hget&quot;, KEYS[2], &quot;i&quot; .. ARGV[1]) ~= &quot;w&quot; .. ARGV[2]</span>
+<span class="s">        then return -1 end</span>
+
+<span class="s">        -- loop through each item</span>
+<span class="s">        local result = {}</span>
+<span class="s">        for i = 3, #ARGV do</span>
+<span class="s">          local item = ARGV[i]</span>
+<span class="s">          -- item must be available to reserve</span>
+<span class="s">          if redis.call(&quot;zscore&quot;, KEYS[1], item) then</span>
+<span class="s">            redis.call(&quot;zrem&quot;, KEYS[1], item)</span>
+<span class="s">            redis.call(&quot;sadd&quot;, KEYS[3], item)</span>
+<span class="s">            result[#result + 1] = item</span>
+<span class="s">          end</span>
+<span class="s">        end</span>
+<span class="s">        return result</span>
+<span class="s">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_available</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_workers</span><span class="p">(),</span>
+                              <span class="bp">self</span><span class="o">.</span><span class="n">_key_reservations</span><span class="p">(</span><span class="n">parent_item</span><span class="p">)],</span>
+                        <span class="n">args</span><span class="o">=</span><span class="p">([</span><span class="n">parent_item</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_worker_id</span><span class="p">(</span><span class="n">conn</span><span class="p">)]</span> <span class="o">+</span>
+                              <span class="nb">list</span><span class="p">(</span><span class="n">items</span><span class="p">)))</span>
+        <span class="k">if</span> <span class="n">result</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">LostLease</span><span class="p">(</span><span class="n">parent_item</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+</div>
+    <span class="k">def</span> <span class="nf">_run_expiration</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">conn</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Return any items that have expired.&quot;&quot;&quot;</span>
+        <span class="c"># The logic here is sufficiently complicated, and we need</span>
+        <span class="c"># enough random keys (Redis documentation strongly encourages</span>
+        <span class="c"># not constructing key names in scripts) that we&#39;ll need to</span>
+        <span class="c"># do this in multiple steps.  This means that, when we do</span>
+        <span class="c"># go in and actually expire things, we need to first check</span>
+        <span class="c"># that they&#39;re still running.</span>
+
+        <span class="c"># Get, and clear out, the list of expiring items</span>
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
+<span class="s">        local result = redis.call(&quot;zrangebyscore&quot;, KEYS[1], 0, ARGV[1])</span>
+<span class="s">        redis.call(&quot;zremrangebyscore&quot;, KEYS[1], 0, ARGV[1])</span>
+<span class="s">        return result</span>
+<span class="s">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="n">expiring</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_expiration</span><span class="p">()],</span> <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()])</span>
+        
+        <span class="c"># Manually expire each item one by one</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&quot;&quot;&quot;</span>
+<span class="s">        -- item may have fallen out of the worker list, if someone finished</span>
+<span class="s">        -- at just the very last possible moment (phew!)</span>
+<span class="s">        local wworker = redis.call(&quot;hget&quot;, KEYS[3], &quot;i&quot; .. ARGV[1])</span>
+<span class="s">        if not wworker then return end</span>
+
+<span class="s">        -- we want to return item, plus everything it&#39;s reserved</span>
+<span class="s">        local to_return = redis.call(&quot;smembers&quot;, KEYS[4])</span>
+<span class="s">        to_return[#to_return + 1] = ARGV[1]</span>
+<span class="s">        for i = 1, #to_return do</span>
+<span class="s">          local pri = redis.call(&quot;hget&quot;, KEYS[2], to_return[i])</span>
+<span class="s">          redis.call(&quot;zadd&quot;, KEYS[1], pri, to_return[i])</span>
+<span class="s">        end</span>
+<span class="s">        -- already removed from expiration list</span>
+<span class="s">        -- remove from worker list too</span>
+<span class="s">        redis.call(&quot;hdel&quot;, KEYS[3], &quot;i&quot; .. ARGV[1])</span>
+<span class="s">        redis.call(&quot;hdel&quot;, KEYS[3], wworker)</span>
+<span class="s">        &quot;&quot;&quot;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">expiring</span><span class="p">:</span>
+            <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_key_available</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_priorities</span><span class="p">(),</span>
+                         <span class="bp">self</span><span class="o">.</span><span class="n">_key_workers</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_key_reservations</span><span class="p">(</span><span class="n">item</span><span class="p">)],</span>
+                   <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">item</span><span class="p">])</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

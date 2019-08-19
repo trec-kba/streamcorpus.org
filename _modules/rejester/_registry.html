@@ -1,0 +1,1099 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>rejester._registry &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for rejester._registry</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Redis dictionary wrapper interface for rejester.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2014 Diffeo, Inc.</span>
+
+<span class="sd">.. autoclass:: Registry</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">uuid</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">random</span>
+<span class="kn">import</span> <span class="nn">struct</span>
+<span class="kn">import</span> <span class="nn">contextlib</span>
+<span class="kn">from</span> <span class="nn">collections</span> <span class="kn">import</span> <span class="n">defaultdict</span>
+<span class="kn">from</span> <span class="nn">operator</span> <span class="kn">import</span> <span class="n">mul</span>
+
+<span class="kn">import</span> <span class="nn">cbor</span>
+<span class="kn">import</span> <span class="nn">redis</span>
+
+<span class="kn">from</span> <span class="nn">rejester.exceptions</span> <span class="kn">import</span> <span class="ne">EnvironmentError</span><span class="p">,</span> <span class="n">LockError</span><span class="p">,</span> \
+    <span class="n">ProgrammerError</span>
+<span class="kn">from</span> <span class="nn">rejester._redis</span> <span class="kn">import</span> <span class="n">RedisBase</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">nice_identifier</span><span class="p">():</span>
+    <span class="s">&#39;do not use uuid.uuid4, because it can block&#39;</span>
+    <span class="n">big</span> <span class="o">=</span> <span class="nb">reduce</span><span class="p">(</span><span class="n">mul</span><span class="p">,</span> <span class="n">struct</span><span class="o">.</span><span class="n">unpack</span><span class="p">(</span><span class="s">&#39;&lt;LLLL&#39;</span><span class="p">,</span> <span class="n">os</span><span class="o">.</span><span class="n">urandom</span><span class="p">(</span><span class="mi">16</span><span class="p">)),</span> <span class="mi">1</span><span class="p">)</span>
+    <span class="n">big</span> <span class="o">=</span> <span class="n">big</span> <span class="o">%</span> <span class="mi">2</span><span class="o">**</span><span class="mi">128</span>
+    <span class="k">return</span> <span class="n">uuid</span><span class="o">.</span><span class="n">UUID</span><span class="p">(</span><span class="nb">int</span><span class="o">=</span><span class="n">big</span><span class="p">)</span><span class="o">.</span><span class="n">hex</span>
+
+
+<div class="viewcode-block" id="Registry"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry">[docs]</a><span class="k">class</span> <span class="nc">Registry</span><span class="p">(</span><span class="n">RedisBase</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Store string-keyed dictionaries in Redis.</span>
+
+<span class="sd">    Provides a centralized storage mechanism for dictionaries,</span>
+<span class="sd">    including atomic operations for moving (key, value) pairs between</span>
+<span class="sd">    dictionaries, and incrementing counts.</span>
+
+<span class="sd">    Many operations on the registry require getting a lock via</span>
+<span class="sd">    the database, for instance</span>
+
+<span class="sd">    &gt;&gt;&gt; with registry.lock() as session:</span>
+<span class="sd">    ...   value = session.get(k1, k2)</span>
+
+<span class="sd">    The lock mechanism ensures that no two Registry objects do work</span>
+<span class="sd">    concurrently, even running on separate systems.  Specific method</span>
+<span class="sd">    descriptions will note if they can run without a lock.  In</span>
+<span class="sd">    general, read-only operations will always run successfully without</span>
+<span class="sd">    a lock but will check for the correct lock if one is given;</span>
+<span class="sd">    certain very simple operations do no lock checking at all; and</span>
+<span class="sd">    read-write operations always require a lock.</span>
+
+<span class="sd">    The basic data object is a string-keyed dictionary stored under</span>
+<span class="sd">    some key.  The dictionary keys are also stored in a prioritized</span>
+<span class="sd">    list.  This in effect provides two levels of dictionary, using the</span>
+<span class="sd">    Redis key and the dictionary key.  The registry makes an effort to</span>
+<span class="sd">    store all types of object as values, serializing them into CBOR.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+
+    <span class="c"># This makes extensive use of Lua scripts in Redis; see</span>
+    <span class="c"># http://redis.io/commands/eval for basics.  This provides atomicity</span>
+    <span class="c"># (Redis never runs anything in parallel with a Lua script), but</span>
+    <span class="c"># also means that much of the logic is in a hard-to-watch script,</span>
+    <span class="c"># and that performance of these scripts is pretty critical.</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Initialize the registry using a config</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">Registry</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="c"># populated only when lock is acquired</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="o">=</span> <span class="bp">None</span>
+
+        <span class="c"># for CBOR encode/decode</span>
+        <span class="c"># http://www.iana.org/assignments/cbor-tags/cbor-tags.xhtml</span>
+        <span class="c"># 37 is UUID; 128 is unassigned</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_tag_mapper</span> <span class="o">=</span> <span class="n">cbor</span><span class="o">.</span><span class="n">TagMapper</span><span class="p">(</span><span class="n">class_tags</span><span class="o">=</span><span class="p">[</span>
+            <span class="n">cbor</span><span class="o">.</span><span class="n">ClassTag</span><span class="p">(</span><span class="mi">37</span><span class="p">,</span> <span class="n">uuid</span><span class="o">.</span><span class="n">UUID</span><span class="p">,</span>
+                          <span class="n">encode_function</span><span class="o">=</span><span class="k">lambda</span> <span class="n">u</span><span class="p">:</span> <span class="n">u</span><span class="o">.</span><span class="n">bytes</span><span class="p">,</span>
+                          <span class="n">decode_function</span><span class="o">=</span><span class="k">lambda</span> <span class="n">b</span><span class="p">:</span> <span class="n">uuid</span><span class="o">.</span><span class="n">UUID</span><span class="p">(</span><span class="nb">bytes</span><span class="o">=</span><span class="n">b</span><span class="p">)),</span>
+            <span class="n">cbor</span><span class="o">.</span><span class="n">ClassTag</span><span class="p">(</span><span class="mi">128</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">,</span>
+                          <span class="n">encode_function</span><span class="o">=</span><span class="nb">list</span><span class="p">,</span> <span class="n">decode_function</span><span class="o">=</span><span class="nb">tuple</span><span class="p">),</span>
+        <span class="p">],</span> <span class="n">raise_on_unknown_tag</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_conn</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;debugging aid to easily grab a connection from the connection pool</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">conn</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">_lock_name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Name of the key for the global lock.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="s">&#39;global_registry_lock&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_acquire_lock</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">identifier</span><span class="p">,</span> <span class="n">atime</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">ltime</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Acquire a lock for a given identifier.</span>
+
+<span class="sd">        If the lock cannot be obtained immediately, keep trying at random</span>
+<span class="sd">        intervals, up to 3 seconds, until `atime` has passed.  Once the</span>
+<span class="sd">        lock has been obtained, continue to hold it for `ltime`.</span>
+
+<span class="sd">        :param str identifier: lock token to write</span>
+<span class="sd">        :param int atime: maximum time (in seconds) to acquire lock</span>
+<span class="sd">        :param int ltime: maximum time (in seconds) to own lock</span>
+<span class="sd">        :return: `identifier` if the lock was obtained, :const:`False`</span>
+<span class="sd">          otherwise</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">+</span> <span class="n">atime</span>
+        <span class="k">while</span> <span class="n">end</span> <span class="o">&gt;</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">conn</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span> <span class="n">identifier</span><span class="p">,</span> <span class="n">ex</span><span class="o">=</span><span class="n">ltime</span><span class="p">,</span> <span class="n">nx</span><span class="o">=</span><span class="bp">True</span><span class="p">):</span>
+                <span class="c"># logger.debug(&quot;won lock %s&quot; % self._lock_name)</span>
+                <span class="k">return</span> <span class="n">identifier</span>
+            <span class="n">sleep_time</span> <span class="o">=</span> <span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">sleep_time</span><span class="p">)</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;failed to acquire lock </span><span class="si">%s</span><span class="s"> for </span><span class="si">%f</span><span class="s"> seconds&#39;</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span> <span class="n">atime</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">False</span>
+
+<div class="viewcode-block" id="Registry.re_acquire_lock"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.re_acquire_lock">[docs]</a>    <span class="k">def</span> <span class="nf">re_acquire_lock</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ltime</span><span class="o">=</span><span class="mi">5</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Re-acquire the lock.</span>
+
+<span class="sd">        You must already own the lock; this is best called from</span>
+<span class="sd">        within a :meth:`lock` block.</span>
+
+<span class="sd">        :param int ltime: maximum time (in seconds) to own lock</span>
+<span class="sd">        :return: the session lock identifier</span>
+<span class="sd">        :raise rejester.exceptions.EnvironmentError:</span>
+<span class="sd">          if we didn&#39;t already own the lock</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">          return redis.call(&quot;expire&quot;, KEYS[1], ARGV[2])</span>
+<span class="s">        else</span>
+<span class="s">          return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">ret</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">],</span>
+                     <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span> <span class="n">ltime</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">ret</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">EnvironmentError</span><span class="p">(</span><span class="s">&#39;failed to re-acquire lock&#39;</span><span class="p">)</span>
+
+        <span class="c"># logger.debug(&#39;re-acquired lock %s&#39;, self._lock_name)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span>
+</div>
+    <span class="k">def</span> <span class="nf">_release_lock</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">identifier</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Release the lock.</span>
+
+<span class="sd">        This requires you to actually have owned the lock.  On return</span>
+<span class="sd">        you definitely do not own it, but if somebody else owned it</span>
+<span class="sd">        before calling this function, they still do.</span>
+
+<span class="sd">        :param str identifier: the session lock identifier</span>
+<span class="sd">        :return: :const:`True` if you actually did own the lock,</span>
+<span class="sd">          :const:`False` if you didn&#39;t</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            return redis.call(&quot;del&quot;, KEYS[1])</span>
+<span class="s">        else</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">num_keys_deleted</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">],</span>
+                                  <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="n">identifier</span><span class="p">])</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">num_keys_deleted</span> <span class="o">==</span> <span class="mi">1</span><span class="p">)</span>
+
+    <span class="nd">@contextlib.contextmanager</span>
+<div class="viewcode-block" id="Registry.lock"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.lock">[docs]</a>    <span class="k">def</span> <span class="nf">lock</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">atime</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span> <span class="n">ltime</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">identifier</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Context manager to acquire the namespace global lock.</span>
+
+<span class="sd">        This is typically used for multi-step registry operations,</span>
+<span class="sd">        such as a read-modify-write sequence::</span>
+
+<span class="sd">            with registry.lock() as session:</span>
+<span class="sd">                d = session.get(&#39;dict&#39;, &#39;key&#39;)</span>
+<span class="sd">                del d[&#39;traceback&#39;]</span>
+<span class="sd">                session.set(&#39;dict&#39;, &#39;key&#39;, d)</span>
+
+<span class="sd">        Callers may provide their own `identifier`; if they do, they</span>
+<span class="sd">        must ensure that it is reasonably unique (e.g., a UUID).</span>
+<span class="sd">        Using a stored worker ID that is traceable back to the lock</span>
+<span class="sd">        holder is a good practice.</span>
+
+<span class="sd">        :param int atime: maximum time (in seconds) to acquire lock</span>
+<span class="sd">        :param int ltime: maximum time (in seconds) to own lock</span>
+<span class="sd">        :param str identifier: worker-unique identifier for the lock</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">identifier</span> <span class="o">=</span> <span class="n">nice_identifier</span><span class="p">()</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_acquire_lock</span><span class="p">(</span><span class="n">identifier</span><span class="p">,</span> <span class="n">atime</span><span class="p">,</span> <span class="n">ltime</span><span class="p">)</span> <span class="o">!=</span> <span class="n">identifier</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">LockError</span><span class="p">(</span><span class="s">&quot;could not acquire lock&quot;</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="o">=</span> <span class="n">identifier</span>
+            <span class="k">yield</span> <span class="bp">self</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_release_lock</span><span class="p">(</span><span class="n">identifier</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="o">=</span> <span class="bp">None</span>
+</div>
+<div class="viewcode-block" id="Registry.read_lock"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.read_lock">[docs]</a>    <span class="k">def</span> <span class="nf">read_lock</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Find out who currently owns the namespace global lock.</span>
+
+<span class="sd">        This is purely a diagnostic tool.  If you are trying to get</span>
+<span class="sd">        the global lock, it is better to just call :meth:`lock`, which</span>
+<span class="sd">        will atomically get the lock if possible and retry.</span>
+
+<span class="sd">        :return: session identifier of the lock holder, or :const:`None`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="Registry.force_clear_lock"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.force_clear_lock">[docs]</a>    <span class="k">def</span> <span class="nf">force_clear_lock</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Kick out whoever currently owns the namespace global lock.</span>
+
+<span class="sd">        This is intended as purely a last-resort tool.  If another</span>
+<span class="sd">        process has managed to get the global lock for a very long time,</span>
+<span class="sd">        or if it requested the lock with a long expiration and then</span>
+<span class="sd">        crashed, this can make the system functional again.  If the</span>
+<span class="sd">        original lock holder is still alive, its session calls may fail</span>
+<span class="sd">        with exceptions.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">)</span>
+</div>
+    <span class="k">def</span> <span class="nf">_encode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Convert an object to a flat string.</span>
+
+<span class="sd">        This simply converts `data` to CBOR format, using tag values</span>
+<span class="sd">        128 and 129 to represent tuples and UUIDs, respectively.</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">data</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s">&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tag_mapper</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_decode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">string</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Convert a flat string to an object.</span>
+
+<span class="sd">        This undoes :meth:`_encode`.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">string</span> <span class="o">==</span> <span class="s">&#39;&#39;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tag_mapper</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">string</span><span class="p">)</span>
+
+<div class="viewcode-block" id="Registry.update"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.update">[docs]</a>    <span class="k">def</span> <span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">mapping</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">priorities</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">expire</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span>
+               <span class="n">locks</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Add mapping to a dictionary, replacing previous values</span>
+
+<span class="sd">        Can be called with only dict_name and expire to refresh the</span>
+<span class="sd">        expiration time.</span>
+
+<span class="sd">        NB: locks are only enforced if present, so nothing prevents</span>
+<span class="sd">        another caller from coming in an modifying data without using</span>
+<span class="sd">        locks.</span>
+
+<span class="sd">        :param mapping: a dict of keys and values to update in</span>
+<span class="sd">          dict_name.  Must be specified if priorities is specified.</span>
+<span class="sd">        :param priorities: a dict with the same keys as those in</span>
+<span class="sd">          mapping that provides a numerical value indicating the</span>
+<span class="sd">          priority to assign to that key.  Default sets 0 for all keys.</span>
+<span class="sd">        :param int expire: if specified, then dict_name will be set to</span>
+<span class="sd">          expire in that many seconds.</span>
+<span class="sd">        :param locks: a dict with the same keys as those in the</span>
+<span class="sd">          mapping.  Before making any particular update, this function</span>
+<span class="sd">          checks if a key is present in a &#39;locks&#39; table for this dict,</span>
+<span class="sd">          and if so, then its value must match the value provided in the</span>
+<span class="sd">          input locks dict for that key.  If not, then the value</span>
+<span class="sd">          provided in the locks dict is inserted into the &#39;locks&#39; table.</span>
+<span class="sd">          If the locks parameter is None, then no lock checking is</span>
+<span class="sd">          performed.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;must acquire lock first&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">priorities</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="c">## set all priorities to zero</span>
+            <span class="n">priorities</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="nb">int</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">locks</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="c">## set all locks to None</span>
+            <span class="n">locks</span> <span class="o">=</span> <span class="n">defaultdict</span><span class="p">(</span><span class="k">lambda</span><span class="p">:</span> <span class="s">&#39;&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="p">(</span><span class="n">expire</span> <span class="ow">is</span> <span class="bp">None</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">expire</span><span class="p">,</span> <span class="nb">int</span><span class="p">)):</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;expire must be int or unspecified&#39;</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            for i = 3, #ARGV, 4  do</span>
+<span class="s">                if ARGV[i+3] ~= &#39;j:&quot;&quot;&#39; then</span>
+<span class="s">                    local curr_lock = redis.call(&quot;hget&quot;,  KEYS[4], ARGV[i])</span>
+<span class="s">                    if curr_lock and curr_lock ~= ARGV[i+3] then</span>
+<span class="s">                        return {-1, ARGV[i], curr_lock, ARGV[i+3]}</span>
+<span class="s">                    end</span>
+<span class="s">                    redis.call(&quot;hset&quot;,  KEYS[4], ARGV[i], ARGV[i+3])</span>
+<span class="s">                end</span>
+<span class="s">            end</span>
+<span class="s">            for i = 3, #ARGV, 4  do</span>
+<span class="s">                redis.call(&quot;hset&quot;,  KEYS[2], ARGV[i], ARGV[i+1])</span>
+<span class="s">                redis.call(&quot;zadd&quot;,  KEYS[3], ARGV[i+2], ARGV[i])</span>
+<span class="s">            end</span>
+<span class="s">            if tonumber(ARGV[2]) ~= nil then</span>
+<span class="s">                redis.call(&quot;expire&quot;, KEYS[2], ARGV[2])</span>
+<span class="s">                redis.call(&quot;expire&quot;, KEYS[3], ARGV[2])</span>
+<span class="s">            end</span>
+<span class="s">            return {1, 0}</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return {0, 0}</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">dict_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">mapping</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">mapping</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">items</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="c">## This flattens the dictionary into a list</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">mapping</span><span class="o">.</span><span class="n">iteritems</span><span class="p">():</span>
+            <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">key</span><span class="p">))</span>
+            <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+            <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">priorities</span><span class="p">[</span><span class="n">key</span><span class="p">])</span>
+            <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">locks</span><span class="p">[</span><span class="n">key</span><span class="p">]))</span>
+
+        <span class="c">#logger.debug(&#39;update %r %r&#39;, dict_name, items)</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                           <span class="n">dict_name</span><span class="p">,</span>
+                           <span class="n">dict_name</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">,</span>
+                           <span class="n">dict_name</span> <span class="o">+</span> <span class="s">&#39;_locks&#39;</span><span class="p">],</span>
+                     <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span> <span class="n">expire</span><span class="p">]</span> <span class="o">+</span> <span class="n">items</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">res</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">EnvironmentError</span><span class="p">(</span>
+                <span class="s">&#39;Unable to add items to </span><span class="si">%s</span><span class="s"> in registry&#39;</span> <span class="o">%</span> <span class="n">dict_name</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">res</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">EnvironmentError</span><span class="p">(</span>
+                <span class="s">&#39;lost lock on key=</span><span class="si">%r</span><span class="s"> owned by </span><span class="si">%r</span><span class="s"> not </span><span class="si">%r</span><span class="s"> in </span><span class="si">%s</span><span class="s">&#39;</span> 
+                <span class="o">%</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">res</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span> <span class="n">res</span><span class="p">[</span><span class="mi">2</span><span class="p">],</span> <span class="n">res</span><span class="p">[</span><span class="mi">3</span><span class="p">],</span> <span class="n">dict_name</span><span class="p">))</span>
+
+</div>
+<div class="viewcode-block" id="Registry.reset_priorities"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.reset_priorities">[docs]</a>    <span class="k">def</span> <span class="nf">reset_priorities</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">priority</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;set all priorities in dict_name to priority</span>
+
+<span class="sd">        :type priority: float or int</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;must acquire lock first&#39;</span><span class="p">)</span>
+        <span class="c">## see comment above for script in update</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            local keys = redis.call(&#39;ZRANGE&#39;, KEYS[2], 0, -1)</span>
+<span class="s">            for i, next_key in ipairs(keys) do</span>
+<span class="s">                redis.call(&quot;zadd&quot;,  KEYS[2], ARGV[2], next_key)</span>
+<span class="s">            end</span>
+<span class="s">            return 1</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return 0</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">dict_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                           <span class="n">dict_name</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">],</span>
+                     <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span>
+                           <span class="n">priority</span><span class="p">])</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">res</span><span class="p">:</span>
+            <span class="c"># We either lost the lock or something else went wrong</span>
+            <span class="k">raise</span> <span class="ne">EnvironmentError</span><span class="p">(</span>
+                <span class="s">&#39;Unable to add items to </span><span class="si">%s</span><span class="s"> in registry&#39;</span> <span class="o">%</span> <span class="n">dict_name</span><span class="p">)</span>
+
+</div>
+<div class="viewcode-block" id="Registry.popmany"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.popmany">[docs]</a>    <span class="k">def</span> <span class="nf">popmany</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="o">*</span><span class="n">keys</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Remove one or more keys from a dictionary.</span>
+
+<span class="sd">        If any of the `keys` are not present, they are silently ignored.</span>
+<span class="sd">        </span>
+<span class="sd">        The actual deletion operation is atomic and does not require a</span>
+<span class="sd">        session lock, but nothing stops another operation from creating</span>
+<span class="sd">        the deleted keys immediately afterwards.  You may call this with</span>
+<span class="sd">        or without a session lock, but the operation will fail if some</span>
+<span class="sd">        other worker holds one.</span>
+
+<span class="sd">        :param str dict_name: name of dictionary to modify</span>
+<span class="sd">        :param str keys: names of keys to remove</span>
+<span class="sd">        :returns: number of keys removed</span>
+<span class="sd">        :raises rejester.exceptions.LockError: if the session lock timed</span>
+<span class="sd">          out, or if this was called without a session lock and some other</span>
+<span class="sd">          worker holds one</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        local lock_holder = redis.call(&quot;get&quot;, KEYS[1])</span>
+<span class="s">        if lock_holder == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            local count = 0</span>
+<span class="s">            for i = 2, #ARGV do</span>
+<span class="s">                if (redis.call(&quot;hexists&quot;, KEYS[2], ARGV[i]) == 1)</span>
+<span class="s">                then</span>
+<span class="s">                    count = count + 1</span>
+<span class="s">                    redis.call(&quot;hdel&quot;, KEYS[2], ARGV[i])</span>
+<span class="s">                    redis.call(&quot;zrem&quot;, KEYS[3], ARGV[i])</span>
+<span class="s">                end</span>
+<span class="s">            end</span>
+<span class="s">            return count</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">),</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span> <span class="o">+</span> <span class="s">&quot;keys&quot;</span><span class="p">],</span>
+                     <span class="n">args</span><span class="o">=</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">]</span> <span class="o">+</span>
+                           <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">key</span><span class="p">)</span> <span class="k">for</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">keys</span><span class="p">]))</span>
+        <span class="k">if</span> <span class="n">res</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">LockError</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">res</span>
+</div>
+<div class="viewcode-block" id="Registry.len"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.len">[docs]</a>    <span class="k">def</span> <span class="nf">len</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">priority_min</span><span class="o">=</span><span class="s">&#39;-inf&#39;</span><span class="p">,</span> <span class="n">priority_max</span><span class="o">=</span><span class="s">&#39;+inf&#39;</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Get the number of items in (part of) a dictionary.</span>
+
+<span class="sd">        Returns number of items in `dict_name` within</span>
+<span class="sd">        [`priority_min`, `priority_max`].  This is similar to</span>
+<span class="sd">        ``len(filter(dict_name, priority_min, priority_max))`` but</span>
+<span class="sd">        does not actually retrieve the items.</span>
+
+<span class="sd">        This is a read-only operation that does not require or</span>
+<span class="sd">        honor a session lock.</span>
+
+<span class="sd">        :param str dict_name: dictionary name to query</span>
+<span class="sd">        :param float priority_min: lowest priority score</span>
+<span class="sd">        :param float priority_max: highest priority score</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">dict_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">conn</span><span class="o">.</span><span class="n">zcount</span><span class="p">(</span><span class="n">dict_name</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">,</span> <span class="n">priority_min</span><span class="p">,</span> <span class="n">priority_max</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="Registry.getitem_reset"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.getitem_reset">[docs]</a>    <span class="k">def</span> <span class="nf">getitem_reset</span><span class="p">(</span>
+            <span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">priority_min</span><span class="o">=</span><span class="s">&#39;-inf&#39;</span><span class="p">,</span> <span class="n">priority_max</span><span class="o">=</span><span class="s">&#39;+inf&#39;</span><span class="p">,</span>
+            <span class="n">new_priority</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+            <span class="n">lock</span><span class="o">=</span><span class="bp">None</span>
+        <span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Select an item and update its priority score.</span>
+
+<span class="sd">        The item comes from `dict_name`, and has the lowest score at</span>
+<span class="sd">        least `priority_min` and at most `priority_max`.  If some item</span>
+<span class="sd">        is found, change its score to `new_priority` and return it.</span>
+
+<span class="sd">        This runs as a single atomic operation but still requires a</span>
+<span class="sd">        session lock.</span>
+
+<span class="sd">        :param str dict_name: source dictionary</span>
+<span class="sd">        :param float priority_min: lowest score</span>
+<span class="sd">        :param float priority_max: highest score</span>
+<span class="sd">        :param float new_priority: new score</span>
+<span class="sd">        :param str lock: lock value for the item</span>
+<span class="sd">        :return: pair of (key, value) if an item was reprioritized, or</span>
+<span class="sd">          :const:`None`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;must acquire lock first&#39;</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            -- remove next item of dict_name</span>
+<span class="s">            local next_key, next_priority = redis.call(&quot;zrangebyscore&quot;,</span>
+<span class="s">                KEYS[3], ARGV[2], ARGV[3], &quot;WITHSCORES&quot;, &quot;LIMIT&quot;, 0, 1)[1]</span>
+
+<span class="s">            if not next_key then</span>
+<span class="s">                return {}</span>
+<span class="s">            end</span>
+
+<span class="s">            local next_val = redis.call(&quot;hget&quot;, KEYS[2], next_key)</span>
+<span class="s">            redis.call(&quot;zadd&quot;, KEYS[3], ARGV[4], next_key)</span>
+<span class="s">            if ARGV[5] then</span>
+<span class="s">                redis.call(&quot;hset&quot;, KEYS[4], next_key, ARGV[5])</span>
+<span class="s">                redis.call(&quot;hset&quot;, KEYS[4], ARGV[5], next_key)</span>
+<span class="s">            else</span>
+<span class="s">                local old_key2 = redis.call(&quot;hget&quot;, KEYS[4], next_key)</span>
+<span class="s">                redis.call(&quot;hdel&quot;, KEYS[4], next_key)</span>
+<span class="s">                redis.call(&quot;hdel&quot;, KEYS[4], old_key2)</span>
+<span class="s">            end</span>
+
+<span class="s">            return {next_key, next_val}</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">dict_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="n">key_value</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                                 <span class="n">dict_name</span><span class="p">,</span>
+                                 <span class="n">dict_name</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">,</span>
+                                 <span class="n">dict_name</span> <span class="o">+</span> <span class="s">&#39;_locks&#39;</span><span class="p">],</span>
+                           <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span>
+                                 <span class="n">priority_min</span><span class="p">,</span> <span class="n">priority_max</span><span class="p">,</span>
+                                 <span class="n">new_priority</span><span class="p">,</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">lock</span><span class="p">)])</span>
+        <span class="k">if</span> <span class="n">key_value</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+                <span class="s">&#39;Registry failed to return an item from </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">dict_name</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">key_value</span> <span class="o">==</span> <span class="p">[]:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">key_value</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">key_value</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</div>
+<div class="viewcode-block" id="Registry.popitem"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.popitem">[docs]</a>    <span class="k">def</span> <span class="nf">popitem</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">priority_min</span><span class="o">=</span><span class="s">&#39;-inf&#39;</span><span class="p">,</span> <span class="n">priority_max</span><span class="o">=</span><span class="s">&#39;+inf&#39;</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Select an item and remove it.</span>
+
+<span class="sd">        The item comes from `dict_name`, and has the lowest score</span>
+<span class="sd">        at least `priority_min` and at most `priority_max`.  If some</span>
+<span class="sd">        item is found, remove it from `dict_name` and return it.</span>
+
+<span class="sd">        This runs as a single atomic operation but still requires a</span>
+<span class="sd">        session lock.</span>
+
+<span class="sd">        :param str dict_name: source dictionary</span>
+<span class="sd">        :param float priority_min: lowest score</span>
+<span class="sd">        :param float priority_max: highest score</span>
+<span class="sd">        :return: pair of (key, value) if an item was popped, or</span>
+<span class="sd">          :const:`None`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;must acquire lock first&#39;</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            -- remove next item of dict_name</span>
+<span class="s">            local next_key, next_priority = redis.call(&quot;zrangebyscore&quot;,</span>
+<span class="s">                KEYS[3], ARGV[2], ARGV[3], &quot;WITHSCORES&quot;, &quot;LIMIT&quot;, 0, 1)[1]</span>
+
+<span class="s">            if not next_key then</span>
+<span class="s">                return {}</span>
+<span class="s">            end</span>
+<span class="s">            </span>
+<span class="s">            redis.call(&quot;zrem&quot;, KEYS[3], next_key)</span>
+<span class="s">            local next_val = redis.call(&quot;hget&quot;, KEYS[2], next_key)</span>
+<span class="s">            -- zrem removed it from list, so also remove from hash</span>
+<span class="s">            redis.call(&quot;hdel&quot;, KEYS[2], next_key)</span>
+<span class="s">            return {next_key, next_val}</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">dict_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="n">key_value</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                                 <span class="n">dict_name</span><span class="p">,</span>
+                                 <span class="n">dict_name</span> <span class="o">+</span> <span class="s">&quot;keys&quot;</span><span class="p">],</span>
+                           <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span>
+                                 <span class="n">priority_min</span><span class="p">,</span>
+                                 <span class="n">priority_max</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">key_value</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+                <span class="s">&#39;Registry failed to return an item from </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">dict_name</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">key_value</span> <span class="o">==</span> <span class="p">[]:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">key_value</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">key_value</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</div>
+<div class="viewcode-block" id="Registry.popitem_move"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.popitem_move">[docs]</a>    <span class="k">def</span> <span class="nf">popitem_move</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">from_dict</span><span class="p">,</span> <span class="n">to_dict</span><span class="p">,</span>
+                     <span class="n">priority_min</span><span class="o">=</span><span class="s">&#39;-inf&#39;</span><span class="p">,</span> <span class="n">priority_max</span><span class="o">=</span><span class="s">&#39;+inf&#39;</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Select an item and move it to another dictionary.</span>
+
+<span class="sd">        The item comes from `from_dict`, and has the lowest score</span>
+<span class="sd">        at least `priority_min` and at most `priority_max`.  If some</span>
+<span class="sd">        item is found, remove it from `from_dict`, add it to `to_dict`,</span>
+<span class="sd">        and return it.</span>
+
+<span class="sd">        This runs as a single atomic operation but still requires a</span>
+<span class="sd">        session lock.</span>
+
+<span class="sd">        :param str from_dict: source dictionary</span>
+<span class="sd">        :param str to_dict: destination dictionary</span>
+<span class="sd">        :param float priority_min: lowest score</span>
+<span class="sd">        :param float priority_max: highest score</span>
+<span class="sd">        :return: pair of (key, value) if an item was moved, or</span>
+<span class="sd">          :const:`None`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;must acquire lock first&#39;</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            -- find the next key and priority</span>
+<span class="s">            local next_items = redis.call(&quot;zrangebyscore&quot;, KEYS[3],</span>
+<span class="s">                ARGV[2], ARGV[3], &quot;WITHSCORES&quot;, &quot;LIMIT&quot;, 0, 1)</span>
+<span class="s">            local next_key = next_items[1]</span>
+<span class="s">            local next_priority = next_items[2]</span>
+<span class="s">            </span>
+<span class="s">            if not next_key then</span>
+<span class="s">                return {}</span>
+<span class="s">            end</span>
+
+<span class="s">            -- remove next item of from_dict</span>
+<span class="s">            redis.call(&quot;zrem&quot;, KEYS[3], next_key)</span>
+
+<span class="s">            local next_val = redis.call(&quot;hget&quot;, KEYS[2], next_key)</span>
+<span class="s">            -- zrem removed it from list, so also remove from hash</span>
+<span class="s">            redis.call(&quot;hdel&quot;, KEYS[2], next_key)</span>
+
+<span class="s">            -- put it in to_dict</span>
+<span class="s">            redis.call(&quot;hset&quot;, KEYS[4], next_key, next_val)</span>
+<span class="s">            redis.call(&quot;zadd&quot;, KEYS[5], next_priority, next_key)</span>
+
+<span class="s">            return {next_key, next_val, next_priority}</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">key_value</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span> 
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">from_dict</span><span class="p">),</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">from_dict</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">,</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">to_dict</span><span class="p">),</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">to_dict</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">],</span>
+                           <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span>
+                                 <span class="n">priority_min</span><span class="p">,</span> <span class="n">priority_max</span><span class="p">])</span>
+
+        <span class="k">if</span> <span class="n">key_value</span> <span class="o">==</span> <span class="p">[]:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="k">if</span> <span class="bp">None</span> <span class="ow">in</span> <span class="n">key_value</span> <span class="ow">or</span> <span class="n">key_value</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span>
+                <span class="s">&#39;Registry.popitem_move(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">) --&gt; </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span>
+                <span class="p">(</span><span class="n">from_dict</span><span class="p">,</span> <span class="n">to_dict</span><span class="p">,</span> <span class="n">key_value</span><span class="p">))</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">key_value</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">key_value</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+</div>
+<div class="viewcode-block" id="Registry.move"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.move">[docs]</a>    <span class="k">def</span> <span class="nf">move</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">from_dict</span><span class="p">,</span> <span class="n">to_dict</span><span class="p">,</span> <span class="n">mapping</span><span class="p">,</span> <span class="n">priority</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Move keys between dictionaries, possibly with changes.</span>
+
+<span class="sd">        Every key in `mapping` is removed from `from_dict`, and added to</span>
+<span class="sd">        `to_dict` with its corresponding value.  The priority will be</span>
+<span class="sd">        `priority`, if specified, or else its current priority.</span>
+
+<span class="sd">        This operation on its own is atomic and does not require a</span>
+<span class="sd">        session lock; however, it does require you to pass in the</span>
+<span class="sd">        values, which probably came from a previous query call.  If</span>
+<span class="sd">        you do not call this with a session lock but some other caller</span>
+<span class="sd">        has one, you will get :class:`rejester.LockError`.  If you do</span>
+<span class="sd">        have a session lock, this will check that you still have it.</span>
+
+<span class="sd">        :param str from_dict: name of original dictionary</span>
+<span class="sd">        :param str to_dict: name of target dictionary</span>
+<span class="sd">        :param dict mapping: keys to move with new values</span>
+<span class="sd">        :param int priority: target priority, or :const:`None` to use existing</span>
+<span class="sd">        :raise rejester.LockError: if the session lock timed out</span>
+<span class="sd">        :raise rejester.EnvironmentError: if some items didn&#39;t move</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">items</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="c">## This flattens the dictionary into a list</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">mapping</span><span class="o">.</span><span class="n">iteritems</span><span class="p">():</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+            <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+            <span class="n">value</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+            <span class="n">items</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        local lock_holder = redis.call(&quot;get&quot;, KEYS[1])</span>
+<span class="s">        if (not lock_holder) or (lock_holder == ARGV[1])</span>
+<span class="s">        then</span>
+<span class="s">            local count = 0</span>
+<span class="s">            for i = 3, #ARGV, 2  do</span>
+<span class="s">                -- find the priority of the item</span>
+<span class="s">                local next_priority = ARGV[2]</span>
+<span class="s">                if next_priority == &quot;&quot; then</span>
+<span class="s">                    next_priority = redis.call(&quot;zscore&quot;, KEYS[3], ARGV[i])</span>
+<span class="s">                end</span>
+<span class="s">                -- remove item from the sorted set and the real data</span>
+<span class="s">                redis.call(&quot;hdel&quot;, KEYS[2], ARGV[i])</span>
+<span class="s">                redis.call(&quot;zrem&quot;, KEYS[3], ARGV[i])</span>
+<span class="s">                -- put it in to_dict</span>
+<span class="s">                redis.call(&quot;hset&quot;, KEYS[4], ARGV[i], ARGV[i+1])</span>
+<span class="s">                redis.call(&quot;zadd&quot;, KEYS[5], next_priority, ARGV[i])</span>
+<span class="s">                count = count + 1</span>
+<span class="s">            end</span>
+<span class="s">            return count</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+
+        <span class="c"># Experimental evidence suggests that redis-py passes</span>
+        <span class="c"># *every* value as a string, maybe unless it&#39;s obviously</span>
+        <span class="c"># a number.  Empty string is an easy &quot;odd&quot; value to test for.</span>
+        <span class="k">if</span> <span class="n">priority</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span> <span class="n">priority</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+        <span class="n">num_moved</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">from_dict</span><span class="p">),</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">from_dict</span><span class="p">)</span> <span class="o">+</span> <span class="s">&quot;keys&quot;</span><span class="p">,</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">to_dict</span><span class="p">),</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">to_dict</span><span class="p">)</span> <span class="o">+</span> <span class="s">&quot;keys&quot;</span><span class="p">],</span>
+                           <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span>
+                                 <span class="n">priority</span><span class="p">]</span> <span class="o">+</span> <span class="n">items</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">num_moved</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">LockError</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">num_moved</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">/</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">EnvironmentError</span><span class="p">(</span>
+                <span class="s">&#39;Registry failed to move all: num_moved = </span><span class="si">%d</span><span class="s"> != </span><span class="si">%d</span><span class="s"> len(items)&#39;</span>
+                <span class="o">%</span> <span class="p">(</span><span class="n">num_moved</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)))</span>
+
+</div>
+<div class="viewcode-block" id="Registry.move_all"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.move_all">[docs]</a>    <span class="k">def</span> <span class="nf">move_all</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">from_dict</span><span class="p">,</span> <span class="n">to_dict</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Move everything from one dictionary to another.</span>
+
+<span class="sd">        This can be expensive if the source dictionary is large.</span>
+
+<span class="sd">        This always requires a session lock.</span>
+
+<span class="sd">        :param str from_dict: source dictionary</span>
+<span class="sd">        :param str to_dict: destination dictionary</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;must acquire lock first&#39;</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            local count = 0</span>
+<span class="s">            local keys = redis.call(&#39;ZRANGE&#39;, KEYS[3], 0, -1)</span>
+<span class="s">            for i, next_key in ipairs(keys) do</span>
+<span class="s">                -- get the value and priority for this key</span>
+<span class="s">                local next_val = redis.call(&quot;hget&quot;, KEYS[2], next_key)</span>
+<span class="s">                local next_priority = redis.call(&quot;zscore&quot;, KEYS[3], next_key)</span>
+<span class="s">                -- remove item of from_dict</span>
+<span class="s">                redis.call(&quot;zrem&quot;, KEYS[3], next_key)</span>
+<span class="s">                -- also remove from hash</span>
+<span class="s">                redis.call(&quot;hdel&quot;, KEYS[2], next_key)</span>
+<span class="s">                -- put it in to_dict</span>
+<span class="s">                redis.call(&quot;hset&quot;,  KEYS[4], next_key, next_val)</span>
+<span class="s">                redis.call(&quot;zadd&quot;, KEYS[5], next_priority, next_key)</span>
+<span class="s">                count = count + 1</span>
+<span class="s">            end</span>
+<span class="s">            return count</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return 0</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">num_moved</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">from_dict</span><span class="p">),</span> 
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">from_dict</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">,</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">to_dict</span><span class="p">),</span>
+                                 <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">to_dict</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">],</span>
+                           <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">])</span>
+        <span class="k">return</span> <span class="n">num_moved</span>
+
+</div>
+<div class="viewcode-block" id="Registry.pull"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.pull">[docs]</a>    <span class="k">def</span> <span class="nf">pull</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Get the entire contents of a single dictionary.</span>
+
+<span class="sd">        This operates without a session lock, but is still atomic.  In</span>
+<span class="sd">        particular this will run even if someone else holds a session</span>
+<span class="sd">        lock and you do not.</span>
+
+<span class="sd">        This is only suitable for &quot;small&quot; dictionaries; if you have</span>
+<span class="sd">        hundreds of thousands of items or more, consider</span>
+<span class="sd">        :meth:`filter` instead to get a subset of a dictionary.</span>
+
+<span class="sd">        :param str dict_name: name of the dictionary to retrieve</span>
+<span class="sd">        :return: corresponding Python dictionary</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">dict_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">hgetall</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="n">split_res</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">([(</span><span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">key</span><span class="p">),</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">value</span><span class="p">))</span>
+                          <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="n">res</span><span class="o">.</span><span class="n">iteritems</span><span class="p">()])</span>
+        <span class="k">return</span> <span class="n">split_res</span>
+</div>
+<div class="viewcode-block" id="Registry.filter"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.filter">[docs]</a>    <span class="k">def</span> <span class="nf">filter</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">priority_min</span><span class="o">=</span><span class="s">&#39;-inf&#39;</span><span class="p">,</span> <span class="n">priority_max</span><span class="o">=</span><span class="s">&#39;+inf&#39;</span><span class="p">,</span>
+               <span class="n">start</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Get a subset of a dictionary.</span>
+
+<span class="sd">        This retrieves only keys with priority scores greater than or</span>
+<span class="sd">        equal to `priority_min` and less than or equal to `priority_max`.</span>
+<span class="sd">        Of those keys, it skips the first `start` ones, and then returns</span>
+<span class="sd">        at most `limit` keys.</span>
+
+<span class="sd">        With default parameters, this retrieves the entire dictionary,</span>
+<span class="sd">        making it a more expensive version of :meth:`pull`.  This can</span>
+<span class="sd">        be used to limit the dictionary by priority score, for instance</span>
+<span class="sd">        using the score as a time stamp and only retrieving values</span>
+<span class="sd">        before or after a specific time; or it can be used to get</span>
+<span class="sd">        slices of the dictionary if there are too many items to use</span>
+<span class="sd">        :meth:`pull`.</span>
+
+<span class="sd">        This is a read-only operation and does not require a session</span>
+<span class="sd">        lock, but if this is run in a session context, the lock will</span>
+<span class="sd">        be honored.</span>
+
+<span class="sd">        :param str dict_name: name of the dictionary to retrieve</span>
+<span class="sd">        :param float priority_min: lowest score to retrieve</span>
+<span class="sd">        :param float priority_max: highest score to retrieve</span>
+<span class="sd">        :param int start: number of items to skip</span>
+<span class="sd">        :param int limit: number of items to retrieve</span>
+<span class="sd">        :return: corresponding (partial) Python dictionary</span>
+<span class="sd">        :raise rejester.LockError: if the session lock timed out</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if (ARGV[1] == &quot;&quot;) or (redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1])</span>
+<span class="s">        then</span>
+<span class="s">            -- find all the keys and priorities within range</span>
+<span class="s">            local next_keys = redis.call(&quot;zrangebyscore&quot;, KEYS[3],</span>
+<span class="s">                                         ARGV[2], ARGV[3],</span>
+<span class="s">                                         &quot;limit&quot;, ARGV[4], ARGV[5])</span>
+<span class="s">            </span>
+<span class="s">            if not next_keys[1] then</span>
+<span class="s">                return {}</span>
+<span class="s">            end</span>
+
+<span class="s">            local t = {}</span>
+<span class="s">            for i = 1, #next_keys  do</span>
+<span class="s">                local next_val = redis.call(&quot;hget&quot;, KEYS[2], next_keys[i])</span>
+<span class="s">                table.insert(t, next_keys[i])</span>
+<span class="s">                table.insert(t, next_val)</span>
+<span class="s">            end</span>
+
+<span class="s">            return t</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">limit</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span> <span class="n">limit</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">),</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">],</span>
+                     <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">or</span> <span class="s">&#39;&#39;</span><span class="p">,</span>
+                           <span class="n">priority_min</span><span class="p">,</span> <span class="n">priority_max</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">limit</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">res</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">LockError</span><span class="p">()</span>
+        <span class="n">split_res</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">([(</span><span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">res</span><span class="p">[</span><span class="n">i</span><span class="p">]),</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">res</span><span class="p">[</span><span class="n">i</span><span class="o">+</span><span class="mi">1</span><span class="p">]))</span>
+                          <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">res</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">)])</span>
+        <span class="k">return</span> <span class="n">split_res</span>
+</div>
+<div class="viewcode-block" id="Registry.set_1to1"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.set_1to1">[docs]</a>    <span class="k">def</span> <span class="nf">set_1to1</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">key1</span><span class="p">,</span> <span class="n">key2</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Set two keys to be equal in a 1-to-1 mapping.</span>
+
+<span class="sd">        Within `dict_name`, `key1` is set to `key2`, and `key2` is set</span>
+<span class="sd">        to `key1`.</span>
+
+<span class="sd">        This always requires a session lock.</span>
+
+<span class="sd">        :param str dict_name: dictionary to update</span>
+<span class="sd">        :param str key1: first key/value</span>
+<span class="sd">        :param str key2: second key/value</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;must acquire lock first&#39;</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            redis.call(&quot;hset&quot;, KEYS[2], ARGV[2], ARGV[3])</span>
+<span class="s">            redis.call(&quot;hset&quot;, KEYS[2], ARGV[3], ARGV[2])</span>
+<span class="s">        else</span>
+<span class="s">            -- ERROR: No longer own the lock</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)],</span>
+                     <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">,</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">key1</span><span class="p">),</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">key2</span><span class="p">)])</span>
+        <span class="k">if</span> <span class="n">res</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">EnvironmentError</span><span class="p">()</span>
+</div>
+<div class="viewcode-block" id="Registry.get"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.get">[docs]</a>    <span class="k">def</span> <span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">include_priority</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Get the value for a specific key in a specific dictionary.</span>
+
+<span class="sd">        If `include_priority` is false (default), returns the value</span>
+<span class="sd">        for that key, or `default` (defaults to :const:`None`) if it</span>
+<span class="sd">        is absent.  If `include_priority` is true, returns a pair of</span>
+<span class="sd">        the value and its priority, or of `default` and :const:`None`.</span>
+
+<span class="sd">        This does not use or enforce the session lock, and is read-only,</span>
+<span class="sd">        but inconsistent results are conceivably possible if the caller</span>
+<span class="sd">        does not hold the lock and `include_priority` is set.</span>
+
+<span class="sd">        :param str dict_name: name of dictionary to query</span>
+<span class="sd">        :param str key: key in dictionary to query</span>
+<span class="sd">        :param default: default value if `key` is absent</span>
+<span class="sd">        :param bool include_priority: include score in results</span>
+<span class="sd">        :return: value from dictionary, or pair of value and priority</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">dict_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_encode</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">val</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">hget</span><span class="p">(</span><span class="n">dict_name</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">_val</span> <span class="o">=</span> <span class="n">default</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">_val</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">val</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">include_priority</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">val</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="n">priority</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">zscore</span><span class="p">(</span><span class="n">dict_name</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">_val</span><span class="p">,</span> <span class="n">priority</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">_val</span><span class="p">,</span> <span class="bp">None</span>
+        <span class="k">return</span> <span class="n">_val</span>
+</div>
+<div class="viewcode-block" id="Registry.set"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.set">[docs]</a>    <span class="k">def</span> <span class="nf">set</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">priority</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Set a single value for a single key.</span>
+
+<span class="sd">        This requires a session lock.</span>
+
+<span class="sd">        :param str dict_name: name of the dictionary to update</span>
+<span class="sd">        :param str key: key to update</span>
+<span class="sd">        :param str value: value to assign to `key`</span>
+<span class="sd">        :param int priority: priority score for the value (if any)</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">priority</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">priorities</span> <span class="o">=</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">priority</span><span class="p">}</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">priorities</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">dict_name</span><span class="p">,</span> <span class="p">{</span><span class="n">key</span><span class="p">:</span> <span class="n">value</span><span class="p">},</span> <span class="n">priorities</span><span class="o">=</span><span class="n">priorities</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="Registry.delete"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.delete">[docs]</a>    <span class="k">def</span> <span class="nf">delete</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">dict_name</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Delete an entire dictionary.</span>
+
+<span class="sd">        This operation on its own is atomic and does not require a</span>
+<span class="sd">        session lock, but a session lock is honored.</span>
+
+<span class="sd">        :param str dict_name: name of the dictionary to delete</span>
+<span class="sd">        :raises rejester.exceptions.LockError: if called with a session</span>
+<span class="sd">          lock, but the system does not currently have that lock; or if</span>
+<span class="sd">          called without a session lock but something else holds it</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">script</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">register_script</span><span class="p">(</span><span class="s">&#39;&#39;&#39;</span>
+<span class="s">        if redis.call(&quot;get&quot;, KEYS[1]) == ARGV[1]</span>
+<span class="s">        then</span>
+<span class="s">            redis.call(&quot;del&quot;, KEYS[2], KEYS[3])</span>
+<span class="s">            return 0</span>
+<span class="s">        else</span>
+<span class="s">            return -1</span>
+<span class="s">        end</span>
+<span class="s">        &#39;&#39;&#39;</span><span class="p">)</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="n">script</span><span class="p">(</span><span class="n">keys</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_lock_name</span><span class="p">,</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">),</span>
+                           <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">dict_name</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;keys&#39;</span><span class="p">],</span>
+                     <span class="n">args</span><span class="o">=</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_session_lock_identifier</span><span class="p">])</span>
+        <span class="k">if</span> <span class="n">res</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">LockError</span><span class="p">()</span>
+</div>
+<div class="viewcode-block" id="Registry.direct_call"><a class="viewcode-back" href="../../sphinx-docs/rejester.html#rejester.Registry.direct_call">[docs]</a>    <span class="k">def</span> <span class="nf">direct_call</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;execute a direct redis call against this Registry instances</span>
+<span class="sd">        namespaced keys.  This is low level is should only be used for</span>
+<span class="sd">        prototyping.</span>
+
+<span class="sd">        arg[0] = redis function</span>
+<span class="sd">        arg[1] = key --- will be namespaced before execution</span>
+<span class="sd">        args[2:] = args to function</span>
+
+<span class="sd">        :returns raw return value of function:</span>
+
+<span class="sd">        Neither args nor return values are encoded/decoded</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">conn</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="p">(</span><span class="n">connection_pool</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">pool</span><span class="p">)</span>
+        <span class="n">command</span> <span class="o">=</span> <span class="n">args</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_namespace</span><span class="p">(</span><span class="n">args</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">args</span> <span class="o">=</span> <span class="n">args</span><span class="p">[</span><span class="mi">2</span><span class="p">:]</span>
+        <span class="n">func</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">conn</span><span class="p">,</span> <span class="n">command</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">func</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">)</span></div></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

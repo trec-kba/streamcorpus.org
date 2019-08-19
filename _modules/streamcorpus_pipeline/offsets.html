@@ -1,0 +1,625 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline.offsets &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline.offsets</h1><div class="highlight"><pre>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">from</span> <span class="nn">HTMLParser</span> <span class="kn">import</span> <span class="n">HTMLParser</span>
+<span class="kn">from</span> <span class="nn">itertools</span> <span class="kn">import</span> <span class="n">izip</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="kn">from</span> <span class="nn">streamcorpus</span> <span class="kn">import</span> <span class="n">InvalidXpathError</span><span class="p">,</span> <span class="n">Offset</span><span class="p">,</span> <span class="n">OffsetType</span><span class="p">,</span> <span class="n">XpathRange</span>
+
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<span class="c"># In HTML5, void elements are technically distinct from self-closing elements.</span>
+<span class="c"># Void elements have a &quot;start&quot; but no end tag, while self-closing elements</span>
+<span class="c"># have cause both the &quot;start&quot; and &quot;end&quot; events to fire.</span>
+<span class="c">#</span>
+<span class="c"># In our HTML parser, we need to be careful with void element handling,</span>
+<span class="c"># otherwise our state gets corrupt (because we cannot assume every start</span>
+<span class="c"># tag has an end tag).</span>
+<span class="n">VOID_ELEMENTS</span> <span class="o">=</span> <span class="nb">set</span><span class="p">([</span><span class="s">&#39;area&#39;</span><span class="p">,</span> <span class="s">&#39;base&#39;</span><span class="p">,</span> <span class="s">&#39;br&#39;</span><span class="p">,</span> <span class="s">&#39;col&#39;</span><span class="p">,</span> <span class="s">&#39;embed&#39;</span><span class="p">,</span> <span class="s">&#39;hr&#39;</span><span class="p">,</span> <span class="s">&#39;img&#39;</span><span class="p">,</span>
+                     <span class="s">&#39;input&#39;</span><span class="p">,</span> <span class="s">&#39;keygen&#39;</span><span class="p">,</span> <span class="s">&#39;link&#39;</span><span class="p">,</span> <span class="s">&#39;meta&#39;</span><span class="p">,</span> <span class="s">&#39;param&#39;</span><span class="p">,</span> <span class="s">&#39;source&#39;</span><span class="p">,</span>
+                     <span class="s">&#39;track&#39;</span><span class="p">,</span> <span class="s">&#39;wbr&#39;</span><span class="p">])</span>
+
+
+<span class="c"># To be written transform.</span>
+<div class="viewcode-block" id="xpath_offsets"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline.offsets.xpath_offsets">[docs]</a><span class="k">class</span> <span class="nc">xpath_offsets</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;xpath_offsets&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&#39;stream item </span><span class="si">%s</span><span class="s">: has no clean_{html,visible}, &#39;</span>
+                           <span class="s">&#39;so we will not generate Xpath offsets&#39;</span><span class="p">,</span>
+                           <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">si</span>
+        <span class="n">add_xpaths_to_stream_item</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">stream_item_roundtrip_xpaths</span><span class="p">(</span><span class="n">si</span><span class="p">,</span> <span class="n">quick</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">XpathMismatchError</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&#39;stream item </span><span class="si">%s</span><span class="s">: Failed xpath roundtrip test, &#39;</span>
+                           <span class="s">&#39;dropping&#39;</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">None</span>
+        <span class="k">return</span> <span class="n">si</span>
+
+</div>
+<span class="k">class</span> <span class="nc">XpathTextCollector</span><span class="p">(</span><span class="n">HTMLParser</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Collects an HTML parse into an xpath.</span>
+
+<span class="sd">    An instance of this class *statefully* constructs an xpath</span>
+<span class="sd">    that corresponds to the HTML that has been parsed thus far.</span>
+<span class="sd">    Basic usage of this class is to:</span>
+
+<span class="sd">        1. Create the parser.</span>
+<span class="sd">        2. Feed it some HTML.</span>
+<span class="sd">        3. Ask for the xpath pointing to the location at which</span>
+<span class="sd">           the aforementioned HTML ended.</span>
+<span class="sd">        4. Go back to step 2 until all HTML has been consumed.</span>
+
+<span class="sd">    This process is useful when you have a contiguous sequence</span>
+<span class="sd">    of HTML fragments that, when concatenated, form a single</span>
+<span class="sd">    HTML document. In particular, this enables one to compute</span>
+<span class="sd">    *addresses* for each fragment.</span>
+
+<span class="sd">    To that end, the xpaths generated by this class have a few</span>
+<span class="sd">    very important properties:</span>
+
+<span class="sd">        1. All xpaths *uniquely* identify a *single* text node</span>
+<span class="sd">           in the HTML document.</span>
+<span class="sd">        2. The offsets generated are actually of the form</span>
+<span class="sd">           `(xpath, char offset)`, where the character offset</span>
+<span class="sd">           indicates where the text starts in the text node</span>
+<span class="sd">           addressed by `xpath`.</span>
+<span class="sd">        3. The combination of two offsets forms a *range*, which</span>
+<span class="sd">           is isomorphic to `Range` objects found in Javascript&#39;s</span>
+<span class="sd">           standard library (which are used to represent user</span>
+<span class="sd">           selections of text).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">HTMLParser</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>  <span class="c"># old-style class :-/</span>
+
+        <span class="c"># The current depth. Incremented when a tag is entered and decremented</span>
+        <span class="c"># when a tag is exited.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">depth</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="c"># The index at which the most recent data node ends. The index is</span>
+        <span class="c"># relative to the data node. (It is reset on every start tag.)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="c"># depth |--&gt; {&#39;path&#39;: [tag | data], &#39;tags&#39;: tag |--&gt; count}</span>
+        <span class="c">#   where `data` is represented via `None`.</span>
+        <span class="c">#</span>
+        <span class="c"># This is used to build the indices of each element in the xpath.</span>
+        <span class="c"># Note that data nodes are also tracked, which are used to compute</span>
+        <span class="c"># the data node indices.</span>
+        <span class="c">#</span>
+        <span class="c"># e.g., `[None, None, p, None]` means that `handle_data` was fired</span>
+        <span class="c"># twice, then `handle_starttag` and then `handle_data` again. The</span>
+        <span class="c"># last `handle_data` corresponds to the start of the *second* text</span>
+        <span class="c"># node in the context&#39;s parent node. (See `self.text_index`.)</span>
+        <span class="c">#</span>
+        <span class="c"># This is all tracked *per depth*. When the parser leaves a depth,</span>
+        <span class="c"># that depth&#39;s stack is popped until it&#39;s empty.</span>
+        <span class="c">#</span>
+        <span class="c"># Finally, this representation enables us to pick out the current</span>
+        <span class="c"># xpath by peeking at the top of each stack from the smallest to</span>
+        <span class="c"># largest depth.</span>
+        <span class="c">#</span>
+        <span class="c"># (We could compute the indices from just `path` by counting elements,</span>
+        <span class="c"># but this is a perf problem. So we track the counts explicitly in</span>
+        <span class="c"># a `tags` dict.)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">init_depth</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+    <span class="c"># This is the one public method!</span>
+    <span class="k">def</span> <span class="nf">xpath_offset</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Returns a tuple of ``(xpath, character offset)``.</span>
+
+<span class="sd">        The ``xpath`` returned *uniquely* identifies the end of the</span>
+<span class="sd">        text node most recently inserted. The character offsets</span>
+<span class="sd">        indicates where the text inside the node ends. (When the text</span>
+<span class="sd">        node is empty, the offset returned is `0`.)</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">datai</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">text_index</span><span class="p">()</span>
+        <span class="n">xpath</span> <span class="o">=</span> <span class="s">&#39;/&#39;</span> <span class="o">+</span> <span class="s">&#39;/&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">xpath_pieces</span><span class="p">())</span> <span class="o">+</span> <span class="p">(</span><span class="s">&#39;/text()[</span><span class="si">%d</span><span class="s">]&#39;</span> <span class="o">%</span> <span class="n">datai</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">uni</span><span class="p">(</span><span class="n">xpath</span><span class="p">),</span> <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span><span class="p">)</span>
+
+    <span class="c"># These help with xpath generation.</span>
+    <span class="k">def</span> <span class="nf">xpath_pieces</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;A generator for a canonical xpath to the current node.</span>
+
+<span class="sd">        This does not include the text node.</span>
+
+<span class="sd">        The generator yields strings, where each string is a component</span>
+<span class="sd">        in the xpath. Joining them with ``/`` is valid, but it will not</span>
+<span class="sd">        be rooted.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">for</span> <span class="n">d</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">):</span>
+            <span class="n">tag</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span><span class="p">[</span><span class="n">d</span><span class="p">][</span><span class="s">&#39;path&#39;</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="k">yield</span> <span class="s">&#39;</span><span class="si">%s</span><span class="s">[</span><span class="si">%d</span><span class="s">]&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span><span class="p">[</span><span class="n">d</span><span class="p">][</span><span class="s">&#39;tags&#39;</span><span class="p">][</span><span class="n">tag</span><span class="p">])</span>
+
+    <span class="k">def</span> <span class="nf">text_index</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Returns the one-based index of the current text node.&#39;&#39;&#39;</span>
+        <span class="n">i</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="n">last_is_data</span> <span class="o">=</span> <span class="bp">False</span>
+        <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">][</span><span class="s">&#39;path&#39;</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="bp">None</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">last_is_data</span><span class="p">:</span>
+                <span class="n">last_is_data</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="k">elif</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span> <span class="ow">and</span> <span class="n">last_is_data</span><span class="p">:</span>
+                <span class="n">i</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">last_is_data</span> <span class="o">=</span> <span class="bp">False</span>
+        <span class="k">return</span> <span class="n">i</span>
+
+    <span class="c"># Some hacks to track whether the parser moved to the next state.</span>
+    <span class="k">def</span> <span class="nf">feed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">):</span>
+        <span class="c"># print(&#39;FEED&#39;, s)</span>
+        <span class="n">HTMLParser</span><span class="o">.</span><span class="n">feed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">made_progress</span> <span class="o">=</span> <span class="bp">False</span>
+        <span class="n">HTMLParser</span><span class="o">.</span><span class="n">feed</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">s</span><span class="p">[</span><span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)</span><span class="o">-</span><span class="mi">1</span><span class="p">:</span><span class="nb">len</span><span class="p">(</span><span class="n">s</span><span class="p">)])</span>
+
+    <span class="k">def</span> <span class="nf">progressor</span><span class="p">(</span><span class="n">meth</span><span class="p">):</span>
+        <span class="k">def</span> <span class="nf">_</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+            <span class="c"># print(meth.__name__, args[0])</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">made_progress</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="k">return</span> <span class="n">meth</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">_</span>
+
+    <span class="c"># Helpers.</span>
+    <span class="k">def</span> <span class="nf">add_element</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">depth</span><span class="p">,</span> <span class="n">tag</span><span class="p">):</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span><span class="p">[</span><span class="n">depth</span><span class="p">]</span>
+        <span class="n">d</span><span class="p">[</span><span class="s">&#39;path&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tag</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">tag</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">d</span><span class="p">[</span><span class="s">&#39;tags&#39;</span><span class="p">]:</span>
+            <span class="n">d</span><span class="p">[</span><span class="s">&#39;tags&#39;</span><span class="p">][</span><span class="n">tag</span><span class="p">]</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">d</span><span class="p">[</span><span class="s">&#39;tags&#39;</span><span class="p">][</span><span class="n">tag</span><span class="p">]</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">def</span> <span class="nf">remove_element</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">depth</span><span class="p">,</span> <span class="n">tag</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span><span class="p">[</span><span class="n">depth</span><span class="p">][</span><span class="s">&#39;path&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">pop</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span><span class="p">[</span><span class="n">depth</span><span class="p">][</span><span class="s">&#39;tags&#39;</span><span class="p">][</span><span class="n">tag</span><span class="p">]</span> <span class="o">-=</span> <span class="mi">1</span>
+
+    <span class="k">def</span> <span class="nf">init_depth</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">depth</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span><span class="p">[</span><span class="n">depth</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;path&#39;</span><span class="p">:</span> <span class="p">[],</span> <span class="s">&#39;tags&#39;</span><span class="p">:</span> <span class="p">{}}</span>
+
+    <span class="c"># Satisfy the `HTMLParser` interface.</span>
+    <span class="nd">@progressor</span>
+    <span class="k">def</span> <span class="nf">handle_starttag</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_element</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">tag</span> <span class="ow">in</span> <span class="n">VOID_ELEMENTS</span><span class="p">:</span>
+            <span class="c"># Void elements are special. We effectively want to ignore them</span>
+            <span class="c"># completely, although we do need to make sure they affect node</span>
+            <span class="c"># indexing.</span>
+            <span class="k">return</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">depth</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">init_depth</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">)</span>
+
+    <span class="nd">@progressor</span>
+    <span class="k">def</span> <span class="nf">handle_endtag</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag</span><span class="p">):</span>
+        <span class="n">d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">depth_stack</span>
+        <span class="k">if</span> <span class="n">tag</span> <span class="ow">in</span> <span class="n">VOID_ELEMENTS</span><span class="p">:</span>
+            <span class="c"># We don&#39;t &quot;descend&quot; into void elements, so we can just ignore</span>
+            <span class="c"># them completely.</span>
+            <span class="k">return</span>
+        <span class="n">d</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">depth</span> <span class="o">-=</span> <span class="mi">1</span>
+        <span class="k">assert</span> <span class="n">d</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">][</span><span class="s">&#39;path&#39;</span><span class="p">][</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">tag</span><span class="p">,</span> \
+                <span class="s">&#39;</span><span class="si">%s</span><span class="s"> not at end of </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">tag</span><span class="p">,</span> <span class="n">d</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">][</span><span class="s">&#39;path&#39;</span><span class="p">])</span>
+
+    <span class="nd">@progressor</span>
+    <span class="k">def</span> <span class="nf">handle_startendtag</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tag</span><span class="p">,</span> <span class="n">attrs</span><span class="p">):</span>
+        <span class="c"># This is *only* called for self-closing elements, e.g., `&lt;br /&gt;`.</span>
+        <span class="c"># It is NOT called for void elements, e.g., `&lt;br&gt;`.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_element</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">,</span> <span class="n">tag</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span> <span class="o">=</span> <span class="mi">0</span>
+
+    <span class="c"># The following methods handle data. They are responsible for recording</span>
+    <span class="c"># enough state such that:</span>
+    <span class="c">#</span>
+    <span class="c">#   1) The index of the current text node can be computed.</span>
+    <span class="c">#   2) The character offset of the current position in the current</span>
+    <span class="c">#      text node can be computed.</span>
+    <span class="c">#</span>
+    <span class="c"># (1) is achieved by adding `None` elements to the xpath stack. These</span>
+    <span class="c"># `None` elements are collapsed in the `text_index` method.</span>
+    <span class="c">#</span>
+    <span class="c"># (2) is achieved by keeping track of the length of data (in terms of</span>
+    <span class="c"># Unicode codepoints) in the current text node. This length is reset</span>
+    <span class="c"># whenever a new tag is opened.</span>
+
+    <span class="nd">@progressor</span>
+    <span class="k">def</span> <span class="nf">handle_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="c"># There is a bug in `HTMLParser` where the data yielded can be</span>
+        <span class="c"># hard-coded in certain state transitions. This means it could yield</span>
+        <span class="c"># data that is `bytes` even though we gave it a Unicode string. ---AG</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">uni</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_element</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="nd">@progressor</span>
+    <span class="k">def</span> <span class="nf">handle_entityref</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_element</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+        <span class="c"># The `2` is for the `&amp;` and `;` in, e.g., `&amp;amp;`.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span> <span class="o">+=</span> <span class="mi">2</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="nd">@progressor</span>
+    <span class="k">def</span> <span class="nf">handle_charref</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">add_element</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">depth</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+        <span class="c"># The `3` is for the `&amp;`, `#` and `;` in, e.g., `&amp;#36;`.</span>
+        <span class="c"># This also applies to hex codes as `name` will contain the</span>
+        <span class="c"># preceding `x`.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data_start</span> <span class="o">+=</span> <span class="mi">3</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="c"># TODO: There are some other callbacks defined in the `HTMLParser`</span>
+    <span class="c"># interface. We probably need to do something with them for complete</span>
+    <span class="c"># correctness. (If they can&#39;t be handled for whatever reason, simply</span>
+    <span class="c"># declare those states as not making progress---`char_offsets_to_xpaths`</span>
+    <span class="c"># will handle it gracefully by not computing xpaths.) ---AG</span>
+
+
+<span class="k">class</span> <span class="nc">XpathMismatchError</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Raised when an Xpath offset is wrong.</span>
+
+<span class="sd">    This occurs when slicing ``clean_html`` with xpaths does not</span>
+<span class="sd">    produce the exact same string as slicing ``clean_visible``</span>
+<span class="sd">    with character offsets.</span>
+
+<span class="sd">    This class has four instance variables:</span>
+
+<span class="sd">    * ``clean_html`` and ``clean_visible`` are a ``unicode`` strings.</span>
+<span class="sd">    * ``xp_range`` is a :class:`streamcorpus.XpathRange`.</span>
+<span class="sd">    * ``char_range`` is a ``(int, int)`` (half-open character range).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">html</span><span class="p">,</span> <span class="n">cleanvis</span><span class="p">,</span> <span class="n">xp_range</span><span class="p">,</span> <span class="n">char_range</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">clean_html</span> <span class="o">=</span> <span class="n">html</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">clean_visible</span> <span class="o">=</span> <span class="n">cleanvis</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">xp_range</span> <span class="o">=</span> <span class="n">xp_range</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">char_range</span> <span class="o">=</span> <span class="n">char_range</span>
+
+
+<span class="k">def</span> <span class="nf">add_xpaths_to_stream_item</span><span class="p">(</span><span class="n">si</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Mutably tag tokens with xpath offsets.</span>
+
+<span class="sd">    Given some stream item, this will tag all tokens from all taggings</span>
+<span class="sd">    in the document that contain character offsets. Note that some</span>
+<span class="sd">    tokens may not have computable xpath offsets, so an xpath offset</span>
+<span class="sd">    for those tokens will not be set. (See the documentation and</span>
+<span class="sd">    comments for ``char_offsets_to_xpaths`` for what it means for a</span>
+<span class="sd">    token to have a computable xpath.)</span>
+
+<span class="sd">    If a token can have its xpath offset computed, it is added to its</span>
+<span class="sd">    set of offsets with a ``OffsetType.XPATH_CHARS`` key.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">sentences_to_xpaths</span><span class="p">(</span><span class="n">sentences</span><span class="p">):</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="n">sentences_to_char_tokens</span><span class="p">(</span><span class="n">sentences</span><span class="p">)</span>
+        <span class="n">offsets</span> <span class="o">=</span> <span class="n">char_tokens_to_char_offsets</span><span class="p">(</span><span class="n">tokens</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">char_offsets_to_xpaths</span><span class="p">(</span><span class="n">html</span><span class="p">,</span> <span class="n">offsets</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">xprange_to_offset</span><span class="p">(</span><span class="n">xprange</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">Offset</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">XPATH_CHARS</span><span class="p">,</span>
+                      <span class="n">first</span><span class="o">=</span><span class="n">xprange</span><span class="o">.</span><span class="n">start_offset</span><span class="p">,</span> <span class="n">length</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                      <span class="n">xpath</span><span class="o">=</span><span class="n">xprange</span><span class="o">.</span><span class="n">start_xpath</span><span class="p">,</span>
+                      <span class="n">content_form</span><span class="o">=</span><span class="s">&#39;clean_html&#39;</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span>
+                      <span class="n">xpath_end</span><span class="o">=</span><span class="n">xprange</span><span class="o">.</span><span class="n">end_xpath</span><span class="p">,</span>
+                      <span class="n">xpath_end_offset</span><span class="o">=</span><span class="n">xprange</span><span class="o">.</span><span class="n">end_offset</span><span class="p">)</span>
+
+    <span class="n">html</span> <span class="o">=</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">sentences</span> <span class="ow">in</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">itervalues</span><span class="p">():</span>
+        <span class="n">tokens</span> <span class="o">=</span> <span class="n">sentences_to_char_tokens</span><span class="p">(</span><span class="n">sentences</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">token</span><span class="p">,</span> <span class="n">xprange</span> <span class="ow">in</span> <span class="n">izip</span><span class="p">(</span><span class="n">tokens</span><span class="p">,</span> <span class="n">sentences_to_xpaths</span><span class="p">(</span><span class="n">sentences</span><span class="p">)):</span>
+            <span class="k">if</span> <span class="n">xprange</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">offset</span> <span class="o">=</span> <span class="n">xprange_to_offset</span><span class="p">(</span><span class="n">xprange</span><span class="p">)</span>
+            <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">XPATH_CHARS</span><span class="p">]</span> <span class="o">=</span> <span class="n">offset</span>
+
+
+<span class="k">def</span> <span class="nf">sentences_to_char_tokens</span><span class="p">(</span><span class="n">si_sentences</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Convert stream item sentences to character ``Offset``s.&#39;&#39;&#39;</span>
+    <span class="k">for</span> <span class="n">sentence</span> <span class="ow">in</span> <span class="n">si_sentences</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">token</span> <span class="ow">in</span> <span class="n">sentence</span><span class="o">.</span><span class="n">tokens</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span> <span class="ow">in</span> <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="n">token</span>
+
+
+<span class="k">def</span> <span class="nf">char_tokens_to_char_offsets</span><span class="p">(</span><span class="n">si_tokens</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Convert character ``Offset``s to character ranges.&#39;&#39;&#39;</span>
+    <span class="k">for</span> <span class="n">token</span> <span class="ow">in</span> <span class="n">si_tokens</span><span class="p">:</span>
+        <span class="n">offset</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">]</span>
+        <span class="k">yield</span> <span class="n">offset</span><span class="o">.</span><span class="n">first</span><span class="p">,</span> <span class="n">offset</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">offset</span><span class="o">.</span><span class="n">length</span>
+
+
+<span class="k">def</span> <span class="nf">char_offsets_to_xpaths</span><span class="p">(</span><span class="n">html</span><span class="p">,</span> <span class="n">char_offsets</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Converts HTML and a sequence of char offsets to xpath offsets.</span>
+
+<span class="sd">    Returns a generator of :class:`streamcorpus.XpathRange` objects</span>
+<span class="sd">    in correspondences with the sequence of ``char_offsets`` given.</span>
+<span class="sd">    Namely, each ``XpathRange`` should address precisely the same text</span>
+<span class="sd">    as that ``char_offsets`` (sans the HTML).</span>
+
+<span class="sd">    Depending on how ``char_offsets`` was tokenized, it&#39;s possible that</span>
+<span class="sd">    some tokens cannot have their xpaths generated reliably. In this</span>
+<span class="sd">    case, a ``None`` value is yielded instead of a ``XpathRange``.</span>
+
+<span class="sd">    ``char_offsets`` must be a sorted and non-overlapping sequence of</span>
+<span class="sd">    character ranges. They do not have to be contiguous.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">html</span> <span class="o">=</span> <span class="n">uni</span><span class="p">(</span><span class="n">html</span><span class="p">)</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">XpathTextCollector</span><span class="p">()</span>
+    <span class="n">prev_end</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">prev_progress</span> <span class="o">=</span> <span class="bp">True</span>
+    <span class="k">for</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span> <span class="ow">in</span> <span class="n">char_offsets</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">start</span> <span class="o">==</span> <span class="n">end</span><span class="p">:</span>
+            <span class="c"># Zero length tokens shall have no quarter!</span>
+            <span class="c"># Note that this is a special case. If we let zero-length tokens</span>
+            <span class="c"># be handled normally, then it will be recorded as if the parser</span>
+            <span class="c"># did not make any progress. But of course, there is no progress</span>
+            <span class="c"># to be had!</span>
+            <span class="k">yield</span> <span class="bp">None</span>
+            <span class="k">continue</span>
+        <span class="c"># If we didn&#39;t make any progress on the previous token, then we&#39;ll</span>
+        <span class="c"># need to try and make progress before we can start tracking offsets</span>
+        <span class="c"># again. Otherwise the parser will report incorrect offset info.</span>
+        <span class="c">#</span>
+        <span class="c"># (The parser can fail to make progress when tokens are split at</span>
+        <span class="c"># weird boundaries, e.g., `&amp;amp` followed by `;`. The parser won&#39;t</span>
+        <span class="c"># make progress after `&amp;amp` but will once `;` is given.)</span>
+        <span class="c">#</span>
+        <span class="c"># Here, we feed the parser one character at a time between where the</span>
+        <span class="c"># last token ended and where the next token will start. In most cases,</span>
+        <span class="c"># this will be enough to nudge the parser along. Once done, we can pick</span>
+        <span class="c"># up where we left off and start handing out offsets again.</span>
+        <span class="c">#</span>
+        <span class="c"># If this still doesn&#39;t let us make progress, then we&#39;ll have to skip</span>
+        <span class="c"># this token too.</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">prev_progress</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="n">prev_end</span><span class="p">,</span> <span class="n">start</span><span class="p">):</span>
+                <span class="n">parser</span><span class="o">.</span><span class="n">feed</span><span class="p">(</span><span class="n">html</span><span class="p">[</span><span class="n">i</span><span class="p">])</span>
+                <span class="n">prev_end</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="n">parser</span><span class="o">.</span><span class="n">made_progress</span><span class="p">:</span>
+                    <span class="k">break</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">parser</span><span class="o">.</span><span class="n">made_progress</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="bp">None</span>
+                <span class="k">continue</span>
+        <span class="c"># Hand the parser everything from the end of the last token to the</span>
+        <span class="c"># start of this one. Then ask for the Xpath, which should be at the</span>
+        <span class="c"># start of `char_offsets`.</span>
+        <span class="k">if</span> <span class="n">prev_end</span> <span class="o">&lt;</span> <span class="n">start</span><span class="p">:</span>
+            <span class="n">parser</span><span class="o">.</span><span class="n">feed</span><span class="p">(</span><span class="n">html</span><span class="p">[</span><span class="n">prev_end</span><span class="p">:</span><span class="n">start</span><span class="p">])</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">parser</span><span class="o">.</span><span class="n">made_progress</span><span class="p">:</span>
+                <span class="n">parser</span><span class="o">.</span><span class="n">feed</span><span class="p">(</span><span class="n">html</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">])</span>
+                <span class="n">prev_progress</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">made_progress</span>
+                <span class="n">prev_end</span> <span class="o">=</span> <span class="n">end</span>
+                <span class="k">yield</span> <span class="bp">None</span>
+                <span class="k">continue</span>
+        <span class="n">xstart</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">xpath_offset</span><span class="p">()</span>
+        <span class="c"># print(&#39;START&#39;, xstart)</span>
+        <span class="c"># Hand it the actual token and ask for the ending offset.</span>
+        <span class="n">parser</span><span class="o">.</span><span class="n">feed</span><span class="p">(</span><span class="n">html</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">])</span>
+        <span class="n">xend</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">xpath_offset</span><span class="p">()</span>
+        <span class="c"># print(&#39;END&#39;, xend)</span>
+        <span class="n">prev_end</span> <span class="o">=</span> <span class="n">end</span>
+
+        <span class="c"># If we couldn&#39;t make progress then the xpaths generated are probably</span>
+        <span class="c"># incorrect. (If the parser doesn&#39;t make progress, then we can&#39;t rely</span>
+        <span class="c"># on the callbacks to have been called, which means we may not have</span>
+        <span class="c"># captured all state correctly.)</span>
+        <span class="c">#</span>
+        <span class="c"># Therefore, we simply give up and claim this token is not addressable.</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">parser</span><span class="o">.</span><span class="n">made_progress</span><span class="p">:</span>
+            <span class="n">prev_progress</span> <span class="o">=</span> <span class="bp">False</span>
+            <span class="k">yield</span> <span class="bp">None</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">prev_progress</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="k">yield</span> <span class="n">XpathRange</span><span class="p">(</span><span class="n">xstart</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">xstart</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">xend</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">xend</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">feed</span><span class="p">(</span><span class="n">html</span><span class="p">[</span><span class="n">prev_end</span><span class="p">:])</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+
+<span class="k">def</span> <span class="nf">uni</span><span class="p">(</span><span class="n">s</span><span class="p">):</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="nb">unicode</span><span class="p">):</span>
+        <span class="k">return</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">s</span>
+
+
+<span class="k">def</span> <span class="nf">stream_item_roundtrip_xpaths</span><span class="p">(</span><span class="n">si</span><span class="p">,</span> <span class="n">quick</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Roundtrip all Xpath offsets in the given stream item.</span>
+
+<span class="sd">    For every token that has both ``CHARS`` and ``XPATH_CHARS``</span>
+<span class="sd">    offsets, slice the ``clean_html`` with the ``XPATH_CHARS`` offset</span>
+<span class="sd">    and check that it matches slicing ``clean_visible`` with the</span>
+<span class="sd">    ``CHARS`` offset.</span>
+
+<span class="sd">    If this passes without triggering an assertion, then we&#39;re</span>
+<span class="sd">    guaranteed that all ``XPATH_CHARS`` offsets in the stream item are</span>
+<span class="sd">    correct. (Note that does not check for completeness. On occasion, a</span>
+<span class="sd">    token&#39;s ``XPATH_CHARS`` offset cannot be computed.)</span>
+
+<span class="sd">    There is copious debugging output to help make potential bugs</span>
+<span class="sd">    easier to track down.</span>
+
+<span class="sd">    This is used in tests in addition to the actual transform. It&#39;s</span>
+<span class="sd">    expensive to run, but not running it means silent and hard to</span>
+<span class="sd">    debug bugs.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">debug</span><span class="p">(</span><span class="n">s</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="n">s</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">print_window</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="mi">200</span><span class="p">):</span>
+        <span class="n">coffset</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">]</span>
+        <span class="n">start</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">coffset</span><span class="o">.</span><span class="n">first</span> <span class="o">-</span> <span class="n">size</span><span class="p">)</span>
+        <span class="n">end</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">),</span> <span class="n">coffset</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">coffset</span><span class="o">.</span><span class="n">length</span> <span class="o">+</span> <span class="n">size</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="s">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">49</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="n">coffset</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="s">&#39;window size: </span><span class="si">%d</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">size</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="n">html</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">])</span>
+        <span class="n">debug</span><span class="p">(</span><span class="s">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">49</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">debug_all</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">xprange</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">err</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">got</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="n">debug</span><span class="p">(</span><span class="s">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">79</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">err</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">debug</span><span class="p">(</span><span class="n">err</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="n">xprange</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="s">&#39;expected: &quot;</span><span class="si">%s</span><span class="s">&quot;&#39;</span> <span class="o">%</span> <span class="n">expected</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">got</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">debug</span><span class="p">(</span><span class="s">&#39;got: &quot;</span><span class="si">%s</span><span class="s">&quot;&#39;</span> <span class="o">%</span> <span class="n">got</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="s">&#39;token value: &quot;</span><span class="si">%s</span><span class="s">&quot;&#39;</span> <span class="o">%</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">token</span><span class="o">.</span><span class="n">token</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">))</span>
+        <span class="n">print_window</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>
+        <span class="n">print_window</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="mi">30</span><span class="p">)</span>
+        <span class="n">print_window</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span>
+        <span class="n">print_window</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>
+        <span class="n">debug</span><span class="p">(</span><span class="s">&#39;-&#39;</span> <span class="o">*</span> <span class="mi">79</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">slice_clean_visible</span><span class="p">(</span><span class="n">token</span><span class="p">):</span>
+        <span class="n">coffset</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">]</span>
+        <span class="k">return</span> <span class="n">cleanvis</span><span class="p">[</span><span class="n">coffset</span><span class="o">.</span><span class="n">first</span><span class="p">:</span><span class="n">coffset</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">coffset</span><span class="o">.</span><span class="n">length</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">test_token</span><span class="p">(</span><span class="n">token</span><span class="p">):</span>
+        <span class="n">coffset</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">coffset</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">False</span>
+        <span class="n">xoffset</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">XPATH_CHARS</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">xoffset</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">False</span>
+        <span class="n">crange</span> <span class="o">=</span> <span class="p">(</span><span class="n">coffset</span><span class="o">.</span><span class="n">first</span><span class="p">,</span> <span class="n">coffset</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">coffset</span><span class="o">.</span><span class="n">length</span><span class="p">)</span>
+        <span class="n">xprange</span> <span class="o">=</span> <span class="n">XpathRange</span><span class="o">.</span><span class="n">from_offset</span><span class="p">(</span><span class="n">xoffset</span><span class="p">)</span>
+        <span class="n">expected</span> <span class="o">=</span> <span class="n">slice_clean_visible</span><span class="p">(</span><span class="n">token</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">expected</span> <span class="o">!=</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">token</span><span class="o">.</span><span class="n">token</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">):</span>
+            <span class="c"># Yeah, apparently this can happen. Maybe it&#39;s a bug</span>
+            <span class="c"># in Basis? I&#39;m trying to hustle, and this only happens</span>
+            <span class="c"># in two instances for the `random` document, so I&#39;m not</span>
+            <span class="c"># going to try to reproduce a minimal counter-example.</span>
+            <span class="c"># ---AG</span>
+            <span class="k">return</span> <span class="bp">False</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">got</span> <span class="o">=</span> <span class="n">xprange</span><span class="o">.</span><span class="n">slice_node</span><span class="p">(</span><span class="n">html_root</span><span class="p">)</span>
+        <span class="k">except</span> <span class="n">InvalidXpathError</span> <span class="k">as</span> <span class="n">err</span><span class="p">:</span>
+            <span class="n">debug_all</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">xprange</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">err</span><span class="o">=</span><span class="n">err</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="n">XpathMismatchError</span><span class="p">(</span><span class="n">html</span><span class="p">,</span> <span class="n">cleanvis</span><span class="p">,</span> <span class="n">xprange</span><span class="p">,</span> <span class="n">crange</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">expected</span> <span class="o">!=</span> <span class="n">got</span><span class="p">:</span>
+            <span class="n">debug_all</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">xprange</span><span class="p">,</span> <span class="n">expected</span><span class="p">,</span> <span class="n">got</span><span class="o">=</span><span class="n">got</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="n">XpathMismatchError</span><span class="p">(</span><span class="n">html</span><span class="p">,</span> <span class="n">cleanvis</span><span class="p">,</span> <span class="n">xprange</span><span class="p">,</span> <span class="n">crange</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">True</span>
+
+    <span class="n">cleanvis</span> <span class="o">=</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+    <span class="n">html</span> <span class="o">=</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+    <span class="n">html_root</span> <span class="o">=</span> <span class="n">XpathRange</span><span class="o">.</span><span class="n">html_node</span><span class="p">(</span><span class="n">html</span><span class="p">)</span>
+    <span class="n">total</span><span class="p">,</span> <span class="n">has_valid_xpath</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
+    <span class="k">for</span> <span class="n">sentences</span> <span class="ow">in</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">itervalues</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">sentence</span> <span class="ow">in</span> <span class="n">sentences</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">quick</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">xrange</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">sentence</span><span class="o">.</span><span class="n">tokens</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="o">-</span><span class="mi">1</span><span class="p">):</span>
+                    <span class="k">if</span> <span class="n">test_token</span><span class="p">(</span><span class="n">sentence</span><span class="o">.</span><span class="n">tokens</span><span class="p">[</span><span class="n">i</span><span class="p">]):</span>
+                        <span class="k">break</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c"># Exhaustive test.</span>
+                <span class="k">for</span> <span class="n">token</span> <span class="ow">in</span> <span class="n">sentence</span><span class="o">.</span><span class="n">tokens</span><span class="p">:</span>
+                    <span class="n">total</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="k">if</span> <span class="n">test_token</span><span class="p">(</span><span class="n">token</span><span class="p">):</span>
+                        <span class="n">has_valid_xpath</span> <span class="o">+=</span> <span class="mi">1</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">quick</span><span class="p">:</span>
+        <span class="c"># This is nonsense if we have quick checking enabled.</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;stream item </span><span class="si">%s</span><span class="s">: </span><span class="si">%d</span><span class="s">/</span><span class="si">%d</span><span class="s"> tokens with valid xpaths&#39;</span><span class="p">,</span>
+                    <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">has_valid_xpath</span><span class="p">,</span> <span class="n">total</span><span class="p">)</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

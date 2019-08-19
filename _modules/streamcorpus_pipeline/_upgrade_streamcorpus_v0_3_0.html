@@ -1,0 +1,234 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._upgrade_streamcorpus_v0_3_0 &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._upgrade_streamcorpus_v0_3_0</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">This software is released under an MIT/X11 open source license.</span>
+
+<span class="sd">Copyright 2012-2014 Diffeo, Inc.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">copy</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="n">old_stream_item_attrs</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;original_url&#39;</span><span class="p">,</span> <span class="s">&#39;ratings&#39;</span><span class="p">,</span> <span class="s">&#39;schost&#39;</span><span class="p">,</span> <span class="s">&#39;source&#39;</span><span class="p">,</span>
+                         <span class="s">&#39;source_metadata&#39;</span><span class="p">,</span> <span class="s">&#39;ratings&#39;</span><span class="p">]</span>
+<span class="n">old_content_item_attrs</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;raw&#39;</span><span class="p">,</span> <span class="s">&#39;encoding&#39;</span><span class="p">,</span> <span class="s">&#39;media_type&#39;</span><span class="p">,</span> <span class="s">&#39;clean_html&#39;</span><span class="p">,</span>
+                          <span class="s">&#39;clean_visible&#39;</span><span class="p">,</span> <span class="s">&#39;logs&#39;</span><span class="p">,</span> <span class="s">&#39;taggings&#39;</span><span class="p">,</span> <span class="s">&#39;language&#39;</span><span class="p">]</span>
+<span class="n">old_token_attrs</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;token_num&#39;</span><span class="p">,</span> <span class="s">&#39;token&#39;</span><span class="p">,</span> <span class="s">&#39;sentence_pos&#39;</span><span class="p">,</span> <span class="s">&#39;lemma&#39;</span><span class="p">,</span>
+                   <span class="s">&#39;pos&#39;</span><span class="p">,</span> <span class="s">&#39;entity_type&#39;</span><span class="p">,</span> <span class="s">&#39;mention_id&#39;</span><span class="p">,</span> <span class="s">&#39;equiv_id&#39;</span><span class="p">,</span>
+                   <span class="s">&#39;parent_id&#39;</span><span class="p">,</span> <span class="s">&#39;dependency_path&#39;</span><span class="p">]</span>
+<span class="n">old_offset_attrs</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;type&#39;</span><span class="p">,</span> <span class="s">&#39;first&#39;</span><span class="p">,</span> <span class="s">&#39;length&#39;</span><span class="p">,</span> <span class="s">&#39;xpath&#39;</span><span class="p">,</span> <span class="s">&#39;content_form&#39;</span><span class="p">,</span>
+                    <span class="s">&#39;value&#39;</span><span class="p">]</span>
+
+<span class="k">def</span> <span class="nf">upgrade_labels</span><span class="p">(</span><span class="n">old_obj</span><span class="p">,</span> <span class="n">new_obj</span><span class="p">):</span>
+    <span class="k">for</span> <span class="n">annotator_id</span><span class="p">,</span> <span class="n">labels</span> <span class="ow">in</span> <span class="n">old_obj</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">iteritems</span><span class="p">():</span>
+        <span class="n">new_obj</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="n">annotator_id</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">label</span> <span class="ow">in</span> <span class="n">labels</span><span class="p">:</span>
+            <span class="n">new_label</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Label</span><span class="p">(</span>
+                <span class="n">annotator</span><span class="o">=</span><span class="n">label</span><span class="o">.</span><span class="n">annotator</span><span class="p">,</span>
+                <span class="n">target</span><span class="o">=</span><span class="n">label</span><span class="o">.</span><span class="n">target</span><span class="p">,</span>
+                <span class="n">positive</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="c">## this is the reason we have to create new_labels</span>
+                <span class="n">offsets</span><span class="o">=</span><span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="p">)</span>
+            <span class="n">new_obj</span><span class="o">.</span><span class="n">labels</span><span class="p">[</span><span class="n">annotator_id</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">new_label</span><span class="p">)</span>
+
+<div class="viewcode-block" id="upgrade_streamcorpus_v0_3_0"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._upgrade_streamcorpus_v0_3_0.upgrade_streamcorpus_v0_3_0">[docs]</a><span class="k">class</span> <span class="nc">upgrade_streamcorpus_v0_3_0</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;upgrade_streamcorpus_v0_3_0&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">version</span> <span class="o">==</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Versions</span><span class="o">.</span><span class="n">v0_3_0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">si</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">si</span><span class="p">,</span> <span class="s">&#39;version&#39;</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s">&#39;upgrade_streamcorpus_v0_3_0 does not support upgrading from v0_1_0; see &quot;_upgrade_streamcorpus.py&quot;&#39;</span><span class="p">)</span>
+
+        <span class="n">si3</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">make_stream_item</span><span class="p">(</span>
+            <span class="n">zulu_timestamp</span><span class="o">=</span><span class="n">si</span><span class="o">.</span><span class="n">stream_time</span><span class="o">.</span><span class="n">zulu_timestamp</span><span class="p">,</span>
+            <span class="n">abs_url</span><span class="o">=</span><span class="n">si</span><span class="o">.</span><span class="n">abs_url</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">si3</span><span class="o">.</span><span class="n">stream_id</span> <span class="o">!=</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">:</span>
+            <span class="n">si3</span><span class="o">.</span><span class="n">external_ids</span><span class="p">[</span><span class="s">&#39;kba-2013&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="n">si3</span><span class="o">.</span><span class="n">stream_id</span><span class="p">:</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">}</span>
+
+        <span class="c">## copy everything</span>
+        <span class="k">for</span> <span class="n">attr</span> <span class="ow">in</span> <span class="n">old_stream_item_attrs</span><span class="p">:</span>
+            <span class="nb">setattr</span><span class="p">(</span><span class="n">si3</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">si</span><span class="p">,</span> <span class="n">attr</span><span class="p">)))</span>
+
+        <span class="n">si3</span><span class="o">.</span><span class="n">body</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">ContentItem</span><span class="p">()</span>
+
+        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">ci</span> <span class="ow">in</span> <span class="n">si</span><span class="o">.</span><span class="n">other_content</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">ci3</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">ContentItem</span><span class="p">()</span>
+            <span class="n">si3</span><span class="o">.</span><span class="n">other_content</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">ci3</span>
+            <span class="k">for</span> <span class="n">attr</span> <span class="ow">in</span> <span class="n">old_content_item_attrs</span><span class="p">:</span>
+                <span class="nb">setattr</span><span class="p">(</span><span class="n">ci3</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">ci</span><span class="p">,</span> <span class="n">attr</span><span class="p">)))</span>
+            <span class="n">upgrade_labels</span><span class="p">(</span><span class="n">ci</span><span class="p">,</span> <span class="n">ci3</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">attr</span> <span class="ow">in</span> <span class="n">old_content_item_attrs</span><span class="p">:</span>
+            <span class="nb">setattr</span><span class="p">(</span><span class="n">si3</span><span class="o">.</span><span class="n">body</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="p">,</span> <span class="n">attr</span><span class="p">)))</span>
+
+        <span class="n">upgrade_labels</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="p">,</span> <span class="n">si3</span><span class="o">.</span><span class="n">body</span><span class="p">)</span>
+
+        <span class="c">## fix the body.sentences[&#39;lingpipe&#39;] mention_id ranges</span>
+        <span class="n">next_global_mention_id</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="c">## mapping from (sentence_id, mention_id) --&gt; global_mention_id</span>
+        <span class="n">mention_ids</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">si3</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="p">[</span><span class="s">&#39;lingpipe&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">sentence_id</span><span class="p">,</span> <span class="n">sentence</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;lingpipe&#39;</span><span class="p">,</span> <span class="p">[])):</span>
+            <span class="n">new_sent</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Sentence</span><span class="p">()</span>
+            <span class="n">si3</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="p">[</span><span class="s">&#39;lingpipe&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">new_sent</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">token_id</span><span class="p">,</span> <span class="n">token</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">sentence</span><span class="o">.</span><span class="n">tokens</span><span class="p">):</span>
+
+                <span class="n">new_token</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Token</span><span class="p">()</span>
+                <span class="n">new_sent</span><span class="o">.</span><span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">new_token</span><span class="p">)</span>
+
+                <span class="k">for</span> <span class="n">attr</span> <span class="ow">in</span> <span class="n">old_token_attrs</span><span class="p">:</span>
+                    <span class="nb">setattr</span><span class="p">(</span><span class="n">new_token</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">copy</span><span class="o">.</span><span class="n">deepcopy</span><span class="p">(</span><span class="nb">getattr</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">attr</span><span class="p">)))</span>
+                <span class="k">for</span> <span class="n">otype</span><span class="p">,</span> <span class="n">offset</span> <span class="ow">in</span> <span class="n">token</span><span class="o">.</span><span class="n">offsets</span><span class="o">.</span><span class="n">iteritems</span><span class="p">():</span>
+                    <span class="n">kwargs</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">([(</span><span class="n">a</span><span class="p">,</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">offset</span><span class="p">,</span> <span class="n">a</span><span class="p">))</span>
+                                   <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">old_offset_attrs</span><span class="p">])</span>
+                    <span class="n">new_token</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">otype</span><span class="p">]</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Offset</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+                <span class="n">upgrade_labels</span><span class="p">(</span><span class="n">token</span><span class="p">,</span> <span class="n">new_token</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">token</span><span class="o">.</span><span class="n">mention_id</span> <span class="ow">not</span> <span class="ow">in</span> <span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="bp">None</span><span class="p">]:</span>
+                    <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">sentence_id</span><span class="p">,</span> <span class="n">token</span><span class="o">.</span><span class="n">mention_id</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">key</span> <span class="ow">in</span> <span class="n">mention_ids</span><span class="p">:</span>
+                        <span class="n">new_mention_id</span> <span class="o">=</span> <span class="n">mention_ids</span><span class="p">[</span><span class="n">key</span><span class="p">]</span>
+
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">new_mention_id</span> <span class="o">=</span> <span class="n">next_global_mention_id</span>
+                        <span class="n">next_global_mention_id</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                        <span class="c">## save it for later</span>
+                        <span class="n">mention_ids</span><span class="p">[</span><span class="n">key</span><span class="p">]</span> <span class="o">=</span> <span class="n">new_mention_id</span>
+
+                    <span class="n">new_token</span><span class="o">.</span><span class="n">mention_id</span> <span class="o">=</span> <span class="n">new_mention_id</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;new_mention_id = </span><span class="si">%d</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">new_mention_id</span><span class="p">)</span>
+
+                    <span class="k">if</span> <span class="n">token</span><span class="o">.</span><span class="n">entity_type</span> <span class="ow">in</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">]:</span>
+                        <span class="c">## convert FEMALE/MALE_PRONOUN</span>
+                        <span class="n">new_token</span><span class="o">.</span><span class="n">mention_type</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">MentionType</span><span class="o">.</span><span class="n">PRO</span>
+                        <span class="n">new_token</span><span class="o">.</span><span class="n">entity_type</span>  <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">EntityType</span><span class="o">.</span><span class="n">PER</span>
+
+                        <span class="k">if</span> <span class="n">token</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">==</span> <span class="mi">3</span><span class="p">:</span>
+                            <span class="n">gender_value</span> <span class="o">=</span> <span class="mi">1</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">gender_value</span> <span class="o">=</span> <span class="mi">0</span>
+
+                        <span class="n">attr</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Attribute</span><span class="p">(</span>
+                            <span class="n">attribute_type</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">AttributeType</span><span class="o">.</span><span class="n">PER_AGE</span><span class="p">,</span>
+                            <span class="n">evidence</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">token</span><span class="p">,</span>
+                            <span class="n">value</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">gender_value</span><span class="p">),</span>
+                            <span class="n">sentence_id</span> <span class="o">=</span> <span class="n">sentence_id</span><span class="p">,</span>
+                            <span class="n">mention_id</span> <span class="o">=</span> <span class="n">token</span><span class="o">.</span><span class="n">mention_id</span><span class="p">)</span>
+
+                        <span class="k">if</span> <span class="s">&#39;lingpipe&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">si3</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">attributes</span><span class="p">:</span>
+                            <span class="n">si3</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s">&#39;lingpipe&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+                        <span class="n">si3</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">attributes</span><span class="p">[</span><span class="s">&#39;lingpipe&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">attr</span><span class="p">)</span>
+
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">new_token</span><span class="o">.</span><span class="n">mention_type</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">MentionType</span><span class="o">.</span><span class="n">NAME</span>
+
+        <span class="c">## return our newly manufacturered v0_3_0 StreamItem</span>
+        <span class="k">return</span> <span class="n">si3</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

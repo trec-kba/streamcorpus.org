@@ -1,0 +1,889 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._pipeline &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._pipeline</h1><div class="highlight"><pre>
+<span class="c">#!/usr/bin/env python</span>
+<span class="sd">&#39;&#39;&#39;Configuration and execution of the actual pipeline.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2015 Diffeo, Inc.</span>
+
+<span class="sd">The :class:`Pipeline` itself consists of a series of</span>
+<span class="sd">:mod:`~streamcorpus_pipeline.stages`.  These are broken into several</span>
+<span class="sd">categories:</span>
+
+<span class="sd">* Exactly one *reader* runs first, producing a sequence of</span>
+<span class="sd">  :class:`streamcorpus.StreamItem` objects.</span>
+
+<span class="sd">* The stream items are fed through *incremental transforms*, which take</span>
+<span class="sd">  one stream item in and produce one stream item out.</span>
+
+<span class="sd">* All of the stream items are written to a file, and *batch transforms*</span>
+<span class="sd">  can operate on the entire collection of stream items at once.</span>
+
+<span class="sd">* *Post-batch incremental transforms* again operate on individual</span>
+<span class="sd">  stream items.</span>
+
+<span class="sd">* Some number of *writers* send the final output somewhere.</span>
+
+<span class="sd">Configuration</span>
+<span class="sd">=============</span>
+
+<span class="sd">The :command:`streamcorpus_pipeline` tool expects configuration in</span>
+<span class="sd">a YAML file.  The configuration resulting from this can be passed</span>
+<span class="sd">through :class:`PipelineFactory` to create :class:`Pipeline` objects.</span>
+<span class="sd">A typical coniguration looks like:</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    streamcorpus_pipeline:</span>
+<span class="sd">      # Lists of stages</span>
+<span class="sd">      reader: from_local_chunks</span>
+<span class="sd">      incremental_transforms: [clean_html, language]</span>
+<span class="sd">      batch_transforms: []</span>
+<span class="sd">      post_batch_incremental_transforms: []</span>
+<span class="sd">      # to_local_chunks must be the last writer if it is used</span>
+<span class="sd">      writers: [to_local_chunks]</span>
+
+<span class="sd">      # Configuration for specific stages</span>
+<span class="sd">      clean_html:</span>
+<span class="sd">        include_language_codes: [en]</span>
+
+<span class="sd">The ``streamcorpus_pipeline`` block can additionally be configured</span>
+<span class="sd">with:</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    root_path: /home/user/diffeo</span>
+
+<span class="sd">Any configuration variable whose name ends in &quot;path&quot; whose value is</span>
+<span class="sd">not an absolute path is considered relative to this directory.  If</span>
+<span class="sd">omitted, use the current directory.</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    tmp_dir_path: directory</span>
+
+<span class="sd">Intermediate files are stored in a subdirectory of :file:`directory`.</span>
+<span class="sd">The pipeline execution will make an effort to clean this up.  If</span>
+<span class="sd">omitted, defaults to :file:`/tmp`.</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    third_dir_path: directory</span>
+
+<span class="sd">External packages such as NLP taggers are stored in subdirectories</span>
+<span class="sd">of :file:`directory`; these are typically individually configured</span>
+<span class="sd">with `path_in_third` options relative to this directory.</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    rate_log_interval: 500</span>
+
+<span class="sd">When this many items have been processed, log an INFO-level log</span>
+<span class="sd">message giving the current progress.</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    input_item_limit: 500</span>
+
+<span class="sd">Stop processing after reading this many stream items.  (Default:</span>
+<span class="sd">process the entire stream)</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    cleanup_tmp_files: true</span>
+
+<span class="sd">After execution finishes, delete the per-execution subdirectory of</span>
+<span class="sd">``tmp_dir_path``.</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    assert_single_source: false</span>
+
+<span class="sd">Normally a set of stream items has a consistent</span>
+<span class="sd">:attr:`streamcorpus.StreamItem.source` value, and the pipeline</span>
+<span class="sd">framework will stop if it sees different values here.  Set this to</span>
+<span class="sd">``false`` to disable this check.  (Default: do assert a single source</span>
+<span class="sd">value)</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    output_chunk_max_count: 500</span>
+
+<span class="sd">After this many items have been written, close and re-open the output.</span>
+<span class="sd">(Default: 500 items)</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    output_max_clean_visible_bytes: 1000000</span>
+
+<span class="sd">After this much :attr:`streamcorpus.StreamItem.clean_visible` content</span>
+<span class="sd">has been written, close and re-open the output.  (Default: write</span>
+<span class="sd">entire output in one batch)</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    external_stages_path: stages.py</span>
+
+<span class="sd">The file :file:`stages.py` is a Python module that declares a</span>
+<span class="sd">top-level dictionary named `Stages`, a map from stage name to</span>
+<span class="sd">implementing class.  Stages defined in this file can be used in any of</span>
+<span class="sd">the appropriate stage lists.</span>
+
+<span class="sd">.. code-block:: yaml</span>
+
+<span class="sd">    external_stages_modules: [ example.stages ]</span>
+
+<span class="sd">The Python module :mod:`example.stages` declares a top-level</span>
+<span class="sd">dictionary named `Stages`, a map from stage name to implementing</span>
+<span class="sd">class.  The named modules must be on :data:`sys.path` so that the</span>
+<span class="sd">Python interpreter can find it.  Stages defined in these modules can</span>
+<span class="sd">be used in any of the appropriate stage lists.</span>
+
+<span class="sd">API</span>
+<span class="sd">===</span>
+
+<span class="sd">The standard execution path is to pass the</span>
+<span class="sd">:mod:`streamcorpus_pipeline` module to</span>
+<span class="sd">:func:`yakonfig.parse_args`, then use :class:`PipelineFactory` to</span>
+<span class="sd">create :class:`Pipeline` objects from the resulting configuration.</span>
+
+<span class="sd">.. todo:: Make the top-level configuration point</span>
+<span class="sd">          :class:`PipelineFactory`, not the</span>
+<span class="sd">          :mod:`streamcorpus_pipeline` module</span>
+
+<span class="sd">.. autoclass:: PipelineFactory</span>
+<span class="sd">   :members:</span>
+
+<span class="sd">.. autoclass:: Pipeline</span>
+<span class="sd">   :members:</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">threading</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">uuid</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">import</span> <span class="nn">gevent</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">gevent</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._exceptions</span> <span class="kn">import</span> <span class="n">TransformGivingUp</span><span class="p">,</span> \
+    <span class="n">InvalidStreamItem</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.util</span> <span class="kn">import</span> <span class="n">rmtree</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="PipelineFactory"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.PipelineFactory">[docs]</a><span class="k">class</span> <span class="nc">PipelineFactory</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Factory to create :class:`Pipeline` objects from configuration.</span>
+
+<span class="sd">    Call this to get a :class:`Pipeline` object.  Typical programmatic</span>
+<span class="sd">    use:</span>
+
+<span class="sd">    .. code-block:: python</span>
+
+<span class="sd">       parser = argparse.ArgumentParser()</span>
+<span class="sd">       args = yakonfig.parse_args([yakonfig, streamcorpus_pipeline])</span>
+<span class="sd">       factory = PipelineFactory(StageRegistry())</span>
+<span class="sd">       pipeline = factory(yakonfig.get_global_config(&#39;streamcorpus_pipeline&#39;))</span>
+
+<span class="sd">    This factory class will instantiate all of the stages named in the</span>
+<span class="sd">    `streamcorpus_pipeline` configuration.  These stages will be created</span>
+<span class="sd">    with their corresponding configuration, except that they have two</span>
+<span class="sd">    keys added, ``tmp_dir_path`` and ``third_dir_path``, from the</span>
+<span class="sd">    top-level configuration.</span>
+
+<span class="sd">    .. automethod:: __init__</span>
+<span class="sd">    .. automethod:: __call__</span>
+
+<span class="sd">    .. attribute:: registry</span>
+
+<span class="sd">       The :class:`streamcorpus_pipeline.stages.StageRegistry` used</span>
+<span class="sd">       to find pipeline stages.</span>
+
+<span class="sd">    .. attribute:: tmp_dir_suffix</span>
+
+<span class="sd">       A string value that is appended to ``tmp_dir_path`` when</span>
+<span class="sd">       creating pipeline stages.  If :const:`None`, use the top-level</span>
+<span class="sd">       ``tmp_dir_path`` configuration directly.</span>
+
+<span class="sd">    .. attribute:: lock</span>
+
+<span class="sd">       A :class:`threading.Lock` to protect against concurrent</span>
+<span class="sd">       modification of `tmp_dir_suffix`.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+
+<div class="viewcode-block" id="PipelineFactory.__init__"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.PipelineFactory.__init__">[docs]</a>    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">registry</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a pipeline factory.</span>
+
+<span class="sd">        :param dict config: top-level &quot;streamcorpus_pipeline&quot; configuration</span>
+<span class="sd">        :param registry: registry of stages</span>
+<span class="sd">        :type registry: :class:`~streamcorpus_pipeline.stages.StageRegistry`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">PipelineFactory</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">registry</span> <span class="o">=</span> <span class="n">registry</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_suffix</span> <span class="o">=</span> <span class="bp">None</span>
+</div>
+<div class="viewcode-block" id="PipelineFactory.create"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.PipelineFactory.create">[docs]</a>    <span class="k">def</span> <span class="nf">create</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stage</span><span class="p">,</span> <span class="n">scp_config</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a pipeline stage.</span>
+
+<span class="sd">        Instantiates `stage` with `config`.  This essentially</span>
+<span class="sd">        translates to ``stage(config)``, except that two keys from</span>
+<span class="sd">        `scp_config` are injected into the configuration:</span>
+<span class="sd">        ``tmp_dir_path`` is an execution-specific directory from</span>
+<span class="sd">        combining the top-level ``tmp_dir_path`` configuration with</span>
+<span class="sd">        :attr:`tmp_dir_suffix`; and ``third_dir_path`` is the same</span>
+<span class="sd">        path from the top-level configuration.  `stage` may be either</span>
+<span class="sd">        a callable returning the stage (e.g. its class), or its name</span>
+<span class="sd">        in the configuration.</span>
+
+<span class="sd">        `scp_config` is the configuration for the pipeline as a</span>
+<span class="sd">        whole, and is required.  `config` is the configuration for</span>
+<span class="sd">        the stage; if it is :const:`None` then it is extracted</span>
+<span class="sd">        from `scp_config`.</span>
+
+<span class="sd">        If you already have a fully formed configuration block</span>
+<span class="sd">        and want to create a stage, you can call</span>
+
+<span class="sd">        .. code-block:: python</span>
+
+<span class="sd">            factory.registry[stage](stage_config)</span>
+
+<span class="sd">        In most cases if you have a stage class object and want to</span>
+<span class="sd">        instantiate it with its defaults you can call</span>
+
+<span class="sd">        .. code-block:: python</span>
+
+<span class="sd">            stage = stage_cls(stage_cls.default_config)</span>
+
+<span class="sd">        .. note:: This mirrors</span>
+<span class="sd">                  :meth:`yakonfig.factory.AutoFactory.create`, with</span>
+<span class="sd">                  some thought that this factory class might migrate</span>
+<span class="sd">                  to using that as a base in the future.</span>
+
+<span class="sd">        :param stage: pipeline stage class, or its name in the registry</span>
+<span class="sd">        :param dict scp_config: configuration block for the pipeline</span>
+<span class="sd">        :param dict config: configuration block for the stage, or</span>
+<span class="sd">          :const:`None` to get it from `scp_config`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="c"># Figure out what we have for a stage and its name</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="nb">basestring</span><span class="p">):</span>
+            <span class="n">stage_name</span> <span class="o">=</span> <span class="n">stage</span>
+            <span class="n">stage_obj</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">registry</span><span class="p">[</span><span class="n">stage_name</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">stage_name</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="s">&#39;config_name&#39;</span><span class="p">,</span> <span class="n">stage</span><span class="o">.</span><span class="n">__name__</span><span class="p">)</span>
+            <span class="n">stage_obj</span> <span class="o">=</span> <span class="n">stage</span>
+
+        <span class="c"># Find the configuration; get a copy we can mutate</span>
+        <span class="k">if</span> <span class="n">config</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">config</span> <span class="o">=</span> <span class="n">scp_config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">stage_name</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">config</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">config</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">stage_obj</span><span class="p">,</span> <span class="s">&#39;default_config&#39;</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="c"># Fill in more values</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_suffix</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">scp_config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">scp_config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">],</span>
+                                                  <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_suffix</span><span class="p">)</span>
+        <span class="n">config</span><span class="p">[</span><span class="s">&#39;third_dir_path&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">scp_config</span><span class="p">[</span><span class="s">&#39;third_dir_path&#39;</span><span class="p">]</span>
+
+        <span class="k">return</span> <span class="n">stage_obj</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+</div>
+    <span class="k">def</span> <span class="nf">_init_stage</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+
+        <span class="sd">&#39;&#39;&#39;Create a single indirect stage.</span>
+
+<span class="sd">        `name` should be the name of a config item that holds the</span>
+<span class="sd">        name of a stage, for instance, ``reader``.  This looks up</span>
+<span class="sd">        the name of that stage, then creates and returns the</span>
+<span class="sd">        stage named.  For instance, if the config says</span>
+
+<span class="sd">        .. code-block:: yaml</span>
+
+<span class="sd">            reader: from_local_chunks</span>
+
+<span class="sd">        then calling ``self._init_stage(scp_config, &#39;reader&#39;)`` will</span>
+<span class="sd">        return a new instance of the</span>
+<span class="sd">        :class:`~streamcorpus_pipeline._local_storage.from_local_chunks`</span>
+<span class="sd">        stage.</span>
+
+<span class="sd">        :param dict config: `streamcorpus_pipeline` configuration block</span>
+<span class="sd">        :param str name: name of stage name entry</span>
+<span class="sd">        :return: new instance of the stage</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="n">name</span><span class="p">],</span> <span class="n">config</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_init_stages</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a list of indirect stages.</span>
+
+<span class="sd">        `name` should be the name of a config item that holds a list</span>
+<span class="sd">        of names of stages, for instance, ``writers``.  This looks up</span>
+<span class="sd">        the names of those stages, then creates and returns the</span>
+<span class="sd">        corresponding list of stage objects.  For instance, if the</span>
+<span class="sd">        config says</span>
+
+<span class="sd">        .. code-block:: yaml</span>
+
+<span class="sd">            incremental_transforms: [clean_html, clean_visible]</span>
+
+<span class="sd">        then calling ``self._init_stages(scp_config,</span>
+<span class="sd">        &#39;incremental_transforms&#39;)`` will return a list of the two</span>
+<span class="sd">        named stage instances.</span>
+
+<span class="sd">        :param dict config: `streamcorpus_pipeline` configuration block</span>
+<span class="sd">        :param str name: name of the stage name list entry</span>
+<span class="sd">        :return: list of new stage instances</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">config</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="k">return</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="n">stage</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span> <span class="k">for</span> <span class="n">stage</span> <span class="ow">in</span> <span class="n">config</span><span class="p">[</span><span class="n">name</span><span class="p">]]</span>
+
+    <span class="k">def</span> <span class="nf">_init_all_stages</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create stages that are used for the pipeline.</span>
+
+<span class="sd">        :param dict config: `streamcorpus_pipeline` configuration</span>
+<span class="sd">        :return: tuple of (reader, incremental transforms, batch</span>
+<span class="sd">          transforms, post-batch incremental transforms, writers,</span>
+<span class="sd">          temporary directory)</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">reader</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_stage</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;reader&#39;</span><span class="p">)</span>
+        <span class="n">incremental_transforms</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_stages</span><span class="p">(</span>
+            <span class="n">config</span><span class="p">,</span> <span class="s">&#39;incremental_transforms&#39;</span><span class="p">)</span>
+        <span class="n">batch_transforms</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_stages</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;batch_transforms&#39;</span><span class="p">)</span>
+        <span class="n">post_batch_incremental_transforms</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_stages</span><span class="p">(</span>
+            <span class="n">config</span><span class="p">,</span> <span class="s">&#39;post_batch_incremental_transforms&#39;</span><span class="p">)</span>
+        <span class="n">writers</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_stages</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;writers&#39;</span><span class="p">)</span>
+        <span class="n">tmp_dir_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">],</span>
+                                    <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_suffix</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">(</span><span class="n">reader</span><span class="p">,</span> <span class="n">incremental_transforms</span><span class="p">,</span> <span class="n">batch_transforms</span><span class="p">,</span>
+                <span class="n">post_batch_incremental_transforms</span><span class="p">,</span> <span class="n">writers</span><span class="p">,</span> <span class="n">tmp_dir_path</span><span class="p">)</span>
+
+<div class="viewcode-block" id="PipelineFactory.__call__"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.PipelineFactory.__call__">[docs]</a>    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a :class:`Pipeline`.</span>
+
+<span class="sd">        Pass in the configuration under the ``streamcorpus_pipeline``</span>
+<span class="sd">        block, not the top-level configuration that contains it.</span>
+
+<span class="sd">        If :attr:`tmp_dir_suffix` is :const:`None`, then locks the</span>
+<span class="sd">        factory and creates stages with a temporary (UUID) value.  If</span>
+<span class="sd">        the configuration has `cleanup_tmp_files` set to :const:`True`</span>
+<span class="sd">        (the default) then executing the resulting pipeline will clean</span>
+<span class="sd">        up the directory afterwards.</span>
+
+<span class="sd">        :param dict config: `streamcorpus_pipeline` configuration</span>
+<span class="sd">        :return: new pipeline instance</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">tmp_dir_suffix</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_suffix</span>
+        <span class="k">if</span> <span class="n">tmp_dir_suffix</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">lock</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_suffix</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">())</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="p">(</span><span class="n">reader</span><span class="p">,</span> <span class="n">incremental_transforms</span><span class="p">,</span> <span class="n">batch_transforms</span><span class="p">,</span>
+                     <span class="n">pbi_transforms</span><span class="p">,</span> <span class="n">writers</span><span class="p">,</span>
+                     <span class="n">tmp_dir_path</span><span class="p">)</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_all_stages</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+                <span class="k">finally</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_suffix</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="p">(</span><span class="n">reader</span><span class="p">,</span> <span class="n">incremental_transforms</span><span class="p">,</span> <span class="n">batch_transforms</span><span class="p">,</span>
+             <span class="n">pbi_transforms</span><span class="p">,</span> <span class="n">writers</span><span class="p">,</span>
+             <span class="n">tmp_dir_path</span><span class="p">)</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_init_all_stages</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">Pipeline</span><span class="p">(</span>
+            <span class="n">rate_log_interval</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;rate_log_interval&#39;</span><span class="p">],</span>
+            <span class="n">input_item_limit</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;input_item_limit&#39;</span><span class="p">),</span>
+            <span class="n">cleanup_tmp_files</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">],</span>
+            <span class="n">tmp_dir_path</span><span class="o">=</span><span class="n">tmp_dir_path</span><span class="p">,</span>
+            <span class="n">assert_single_source</span><span class="o">=</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;assert_single_source&#39;</span><span class="p">],</span>
+            <span class="n">output_chunk_max_count</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;output_chunk_max_count&#39;</span><span class="p">),</span>
+            <span class="n">output_max_clean_visible_bytes</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                <span class="s">&#39;output_max_clean_visible_bytes&#39;</span><span class="p">),</span>
+            <span class="n">reader</span><span class="o">=</span><span class="n">reader</span><span class="p">,</span>
+            <span class="n">incremental_transforms</span><span class="o">=</span><span class="n">incremental_transforms</span><span class="p">,</span>
+            <span class="n">batch_transforms</span><span class="o">=</span><span class="n">batch_transforms</span><span class="p">,</span>
+            <span class="n">post_batch_incremental_transforms</span><span class="o">=</span><span class="n">pbi_transforms</span><span class="p">,</span>
+            <span class="n">writers</span><span class="o">=</span><span class="n">writers</span><span class="p">,</span>
+        <span class="p">)</span>
+
+</div></div>
+<div class="viewcode-block" id="Pipeline"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.Pipeline">[docs]</a><span class="k">class</span> <span class="nc">Pipeline</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Pipeline for extracting data into StreamItem instances.</span>
+
+<span class="sd">    The pipeline has five sets of stages.  The *reader* stage reads</span>
+<span class="sd">    from some input source and produces a series of StreamItem objects</span>
+<span class="sd">    out.  *Incremental transforms* take single StreamItem objects in</span>
+<span class="sd">    and produce single StreamItem objects out.  *Batch transforms* run</span>
+<span class="sd">    on the entire set of StreamItem objects together.  There is a</span>
+<span class="sd">    further set of *post-batch incremental transforms* which again run</span>
+<span class="sd">    on individual StreamItem objects.  Finally, any number of *writers*</span>
+<span class="sd">    send output somewhere, usually a streamcorpus.Chunk file.</span>
+
+<span class="sd">    .. automethod:: __init__</span>
+<span class="sd">    .. automethod:: run</span>
+<span class="sd">    .. automethod:: _process_task</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+<div class="viewcode-block" id="Pipeline.__init__"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.Pipeline.__init__">[docs]</a>    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">rate_log_interval</span><span class="p">,</span> <span class="n">input_item_limit</span><span class="p">,</span>
+                 <span class="n">cleanup_tmp_files</span><span class="p">,</span> <span class="n">tmp_dir_path</span><span class="p">,</span> <span class="n">assert_single_source</span><span class="p">,</span>
+                 <span class="n">output_chunk_max_count</span><span class="p">,</span> <span class="n">output_max_clean_visible_bytes</span><span class="p">,</span>
+                 <span class="n">reader</span><span class="p">,</span> <span class="n">incremental_transforms</span><span class="p">,</span> <span class="n">batch_transforms</span><span class="p">,</span>
+                 <span class="n">post_batch_incremental_transforms</span><span class="p">,</span> <span class="n">writers</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a new pipeline object.</span>
+
+<span class="sd">        .. todo:: make this callable with just the lists of stages</span>
+<span class="sd">                  and give sane (language-level) defaults for the rest</span>
+
+<span class="sd">        :param int rate_log_interval: print progress every time this</span>
+<span class="sd">          many input items have been processed</span>
+<span class="sd">        :param int input_item_limit: stop after this many items</span>
+<span class="sd">        :param bool cleanup_tmp_files: delete `tmp_dir_path` after</span>
+<span class="sd">          execution if true</span>
+<span class="sd">        :param str tmp_dir_path: path for intermediate files</span>
+<span class="sd">        :param bool assert_single_source: require all items to have</span>
+<span class="sd">          the same source value if true</span>
+<span class="sd">        :param int output_chunk_max_count: restart output after</span>
+<span class="sd">          writing this many items</span>
+<span class="sd">        :param int output_max_clean_visible_bytes: restart output after</span>
+<span class="sd">          writing this much content</span>
+<span class="sd">        :param callable reader: reader stage object</span>
+<span class="sd">        :param incremental_transforms: single-item transformation stages</span>
+<span class="sd">        :paramtype incremental_transforms: list of callable</span>
+<span class="sd">        :param batch_transforms: chunk-file transformation stages</span>
+<span class="sd">        :paramtype batch_transforms: list of callable</span>
+<span class="sd">        :param post_batch_incremental_transforms: single-item transformation</span>
+<span class="sd">          stages</span>
+<span class="sd">        :paramtype post_batch_incremental_transforms: list of callable</span>
+<span class="sd">        :param writers: output stages</span>
+<span class="sd">        :paramtype writers: list of callable</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rate_log_interval</span> <span class="o">=</span> <span class="n">rate_log_interval</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">input_item_limit</span> <span class="o">=</span> <span class="n">input_item_limit</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">cleanup_tmp_files</span> <span class="o">=</span> <span class="n">cleanup_tmp_files</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_path</span> <span class="o">=</span> <span class="n">tmp_dir_path</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">assert_single_source</span> <span class="o">=</span> <span class="n">assert_single_source</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">output_chunk_max_count</span> <span class="o">=</span> <span class="n">output_chunk_max_count</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">output_max_clean_visible_bytes</span> <span class="o">=</span> <span class="n">output_max_clean_visible_bytes</span>
+
+        <span class="c"># stages that get passed in:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">reader</span> <span class="o">=</span> <span class="n">reader</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">incremental_transforms</span> <span class="o">=</span> <span class="n">incremental_transforms</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">batch_transforms</span> <span class="o">=</span> <span class="n">batch_transforms</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">pbi_stages</span> <span class="o">=</span> <span class="n">post_batch_incremental_transforms</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">writers</span> <span class="o">=</span> <span class="n">writers</span>
+
+        <span class="c"># current Chunk output file for incremental transforms</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="c"># context allows stages to communicate with later stages</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">context</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+            <span class="n">i_str</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span>
+            <span class="n">data</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span>
+            <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span> <span class="o">=</span> <span class="bp">None</span>
+</div>
+<div class="viewcode-block" id="Pipeline._process_task"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.Pipeline._process_task">[docs]</a>    <span class="k">def</span> <span class="nf">_process_task</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">work_unit</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Process a :class:`rejester.WorkUnit`.</span>
+
+<span class="sd">        The work unit&#39;s key is taken as the input file name.  The</span>
+<span class="sd">        data should have ``start_count`` and ``start_chunk_time``</span>
+<span class="sd">        values, which are passed on to :meth:`run`.</span>
+
+<span class="sd">        :param work_unit: work unit to process</span>
+<span class="sd">        :paramtype work_unit: :class:`rejester.WorkUnit`</span>
+<span class="sd">        :return: number of stream items processed</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span> <span class="o">=</span> <span class="n">work_unit</span>
+        <span class="n">i_str</span> <span class="o">=</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">key</span>
+        <span class="n">start_count</span> <span class="o">=</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;start_count&#39;</span><span class="p">]</span>
+        <span class="n">start_chunk_time</span> <span class="o">=</span> <span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;start_chunk_time&#39;</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">i_str</span><span class="p">,</span> <span class="n">start_count</span><span class="p">,</span> <span class="n">start_chunk_time</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="Pipeline.run"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._pipeline.Pipeline.run">[docs]</a>    <span class="k">def</span> <span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">start_count</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">start_chunk_time</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Run the pipeline.</span>
+
+<span class="sd">        This runs all of the steps described in the pipeline constructor,</span>
+<span class="sd">        reading from some input and writing to some output.</span>
+
+<span class="sd">        :param str i_str: name of the input file, or other reader-specific</span>
+<span class="sd">          description of where to get input</span>
+<span class="sd">        :param int start_count: index of the first stream item</span>
+<span class="sd">        :param int start_chunk_time: timestamp for the first stream item</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_path</span><span class="p">):</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_path</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">start_chunk_time</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="n">start_chunk_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+
+            <span class="c">## the reader returns generators of StreamItems</span>
+            <span class="n">i_chunk</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">reader</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span>
+
+            <span class="c">## t_path points to the currently in-progress temp chunk</span>
+            <span class="n">t_path</span> <span class="o">=</span> <span class="bp">None</span>
+
+            <span class="c">## loop over all docs in the chunk processing and cutting</span>
+            <span class="c">## smaller chunks if needed</span>
+
+            <span class="n">len_clean_visible</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="n">sources</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+            <span class="n">next_idx</span> <span class="o">=</span> <span class="mi">0</span>
+
+            <span class="c">## how many have we input and actually done processing on?</span>
+            <span class="n">input_item_count</span> <span class="o">=</span> <span class="mi">0</span>
+
+            <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">i_chunk</span><span class="p">:</span>
+                <span class="c"># TODO: break out a _process_stream_item function?</span>
+                <span class="n">next_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                <span class="c">## yield to the gevent hub to allow other things to run</span>
+                <span class="k">if</span> <span class="n">gevent</span><span class="p">:</span>
+                    <span class="n">gevent</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+                <span class="c">## skip forward until we reach start_count</span>
+                <span class="k">if</span> <span class="n">next_idx</span> <span class="o">&lt;=</span> <span class="n">start_count</span><span class="p">:</span>
+                    <span class="k">continue</span>
+
+                <span class="k">if</span> <span class="n">next_idx</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">rate_log_interval</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="c">## indexing is zero-based, so next_idx corresponds</span>
+                    <span class="c">## to length of list of SIs processed so far</span>
+                    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_chunk_time</span>
+                    <span class="k">if</span> <span class="n">elapsed</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                        <span class="n">rate</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">next_idx</span><span class="p">)</span> <span class="o">/</span> <span class="n">elapsed</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%d</span><span class="s"> in </span><span class="si">%.1f</span><span class="s"> --&gt; </span><span class="si">%.1f</span><span class="s"> per sec on &#39;</span>
+                                    <span class="s">&#39;(pre-partial_commit) </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span>
+                                    <span class="n">next_idx</span> <span class="o">-</span> <span class="n">start_count</span><span class="p">,</span> <span class="n">elapsed</span><span class="p">,</span> <span class="n">rate</span><span class="p">,</span>
+                                    <span class="n">i_str</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">:</span>
+                    <span class="c">## make a temporary chunk at a temporary path</span>
+                    <span class="c"># (Lazy allocation after we&#39;ve read an item that might get processed out to the new chunk file)</span>
+                    <span class="c"># TODO: make this EVEN LAZIER by not opening the t_chunk until inside _run_incremental_transforms whe the first output si is ready</span>
+                    <span class="n">t_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_path</span><span class="p">,</span>
+                                          <span class="s">&#39;t_chunk-</span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()</span><span class="o">.</span><span class="n">hex</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">t_path</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;wb&#39;</span><span class="p">)</span>
+                    <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="o">.</span><span class="n">message</span> <span class="o">==</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_3_0</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="o">.</span><span class="n">message</span>
+
+                <span class="c"># TODO: a set of incremental transforms is equivalent</span>
+                <span class="c"># to a batch transform.  Make the pipeline explicitly</span>
+                <span class="c"># configurable as such:</span>
+                <span class="c">#</span>
+                <span class="c"># batch_transforms: [[incr set 1], batch op, [incr set 2], ...]</span>
+                <span class="c">#</span>
+                <span class="c"># OR: for some list of transforms (mixed incremental</span>
+                <span class="c"># and batch) pipeline can detect and batchify as needed</span>
+
+                <span class="c">## incremental transforms populate t_chunk</span>
+                <span class="c">## let the incremental transforms destroy the si by</span>
+                <span class="c">## returning None</span>
+                <span class="n">si</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_incremental_transforms</span><span class="p">(</span>
+                    <span class="n">si</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">incremental_transforms</span><span class="p">)</span>
+
+                <span class="c">## insist that every chunk has only one source string</span>
+                <span class="k">if</span> <span class="n">si</span><span class="p">:</span>
+                    <span class="n">sources</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">source</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">assert_single_source</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="n">sources</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">InvalidStreamItem</span><span class="p">(</span>
+                            <span class="s">&#39;stream item </span><span class="si">%r</span><span class="s"> had source </span><span class="si">%r</span><span class="s">, not </span><span class="si">%r</span><span class="s"> &#39;</span>
+                            <span class="s">&#39;(set assert_single_source: false to suppress)&#39;</span> <span class="o">%</span>
+                            <span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">source</span><span class="p">,</span> <span class="n">sources</span><span class="p">))</span>
+
+                <span class="k">if</span> <span class="n">si</span> <span class="ow">and</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span> <span class="ow">and</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">:</span>
+                    <span class="n">len_clean_visible</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">)</span>
+                    <span class="c">## log binned clean_visible lengths, for quick stats estimates</span>
+                    <span class="c">#logger.debug(&#39;len(si.body.clean_visible)=%d&#39; % int(10 * int(math.floor(float(len(si.body.clean_visible)) / 2**10)/10)))</span>
+                    <span class="c">#logger.debug(&#39;len(si.body.clean_visible)=%d&#39; % len(si.body.clean_visible))</span>
+
+                <span class="k">if</span> <span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">output_chunk_max_count</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span> <span class="ow">and</span>
+                     <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">)</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">output_chunk_max_count</span><span class="p">)):</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;reached output_chunk_max_count (</span><span class="si">%d</span><span class="s">) at: </span><span class="si">%d</span><span class="s">&#39;</span><span class="p">,</span>
+                                <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">),</span> <span class="n">next_idx</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_process_output_chunk</span><span class="p">(</span>
+                        <span class="n">start_count</span><span class="p">,</span> <span class="n">next_idx</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">t_path</span><span class="p">)</span>
+                    <span class="n">start_count</span> <span class="o">=</span> <span class="n">next_idx</span>
+
+                <span class="k">elif</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">output_max_clean_visible_bytes</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span> <span class="ow">and</span>
+                      <span class="n">len_clean_visible</span> <span class="o">&gt;=</span>
+                      <span class="bp">self</span><span class="o">.</span><span class="n">output_chunk_max_clean_visible_bytes</span><span class="p">):</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span>
+                        <span class="s">&#39;reached output_chunk_max_clean_visible_bytes &#39;</span>
+                        <span class="s">&#39;(</span><span class="si">%d</span><span class="s">) at: </span><span class="si">%d</span><span class="s">&#39;</span><span class="p">,</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">output_chunk_max_clean_visible_bytes</span><span class="p">,</span>
+                        <span class="n">len_clean_visible</span><span class="p">)</span>
+                    <span class="n">len_clean_visible</span> <span class="o">=</span> <span class="mi">0</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_process_output_chunk</span><span class="p">(</span>
+                        <span class="n">start_count</span><span class="p">,</span> <span class="n">next_idx</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">t_path</span><span class="p">)</span>
+                    <span class="n">start_count</span> <span class="o">=</span> <span class="n">next_idx</span>
+
+                <span class="n">input_item_count</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="p">(((</span><span class="bp">self</span><span class="o">.</span><span class="n">input_item_limit</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">)</span> <span class="ow">and</span>
+                     <span class="p">(</span><span class="n">input_item_count</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">input_item_limit</span><span class="p">))):</span>
+                    <span class="k">break</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_process_output_chunk</span><span class="p">(</span>
+                    <span class="n">start_count</span><span class="p">,</span> <span class="n">next_idx</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">t_path</span><span class="p">)</span>
+
+            <span class="c">## return how many stream items we processed</span>
+            <span class="k">return</span> <span class="n">next_idx</span>
+
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">transform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">batch_transforms</span><span class="p">:</span>
+                <span class="n">transform</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">cleanup_tmp_files</span><span class="p">:</span>
+                <span class="n">rmtree</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_path</span><span class="p">)</span>
+</div>
+    <span class="k">def</span> <span class="nf">_process_output_chunk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">start_count</span><span class="p">,</span> <span class="n">next_idx</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span>
+                              <span class="n">t_path</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        for the current output chunk (which should be open):</span>
+<span class="sd">          1. run batch transforms</span>
+<span class="sd">          2. run post-batch incremental transforms</span>
+<span class="sd">          3. run &#39;writers&#39; to load-out the data to files or other storage</span>
+<span class="sd">        return list of paths that writers wrote to</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">:</span>
+            <span class="c"># nothing to do</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+        <span class="c"># gather the paths as the writers run</span>
+        <span class="n">o_paths</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c"># only batch transform and load if the chunk</span>
+            <span class="c"># isn&#39;t empty, which can happen when filtering</span>
+            <span class="c"># with stages like &quot;find&quot;</span>
+
+            <span class="c"># batch transforms act on the whole chunk in-place</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;running batch transforms on </span><span class="si">%d</span><span class="s"> StreamItems&#39;</span><span class="p">,</span>
+                        <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_run_batch_transforms</span><span class="p">(</span><span class="n">t_path</span><span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">_maybe_run_post_batch_incremental_transforms</span><span class="p">(</span><span class="n">t_path</span><span class="p">)</span>
+
+            <span class="c"># only proceed if above transforms left us with something</span>
+            <span class="k">if</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="mi">0</span><span class="p">):</span>
+                <span class="n">o_paths</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_writers</span><span class="p">(</span><span class="n">start_count</span><span class="p">,</span> <span class="n">next_idx</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span>
+                                            <span class="n">i_str</span><span class="p">,</span> <span class="n">t_path</span><span class="p">)</span>
+
+        <span class="c"># we&#39;re now officially done with the chunk</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span> <span class="o">=</span> <span class="bp">None</span>
+
+        <span class="c"># If we wrote some paths, update the data dictionary of outputs</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span> <span class="ow">and</span> <span class="n">o_paths</span><span class="p">:</span>
+            <span class="n">old_o_paths</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;output&#39;</span><span class="p">,</span> <span class="p">[])</span>
+            <span class="n">o_paths</span> <span class="o">=</span> <span class="n">old_o_paths</span> <span class="o">+</span> <span class="n">o_paths</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;start_count&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">next_idx</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;output&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">o_paths</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">work_unit</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">_run_batch_transforms</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">chunk_path</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Run all of the batch transforms over some intermediate chunk.&#39;&#39;&#39;</span>
+        <span class="k">for</span> <span class="n">transform</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">batch_transforms</span><span class="p">:</span>
+            <span class="n">transform</span><span class="o">.</span><span class="n">process_path</span><span class="p">(</span><span class="n">chunk_path</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_maybe_run_post_batch_incremental_transforms</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">):</span>
+        <span class="c">## Run post batch incremental (pbi) transform stages.</span>
+        <span class="c">## These exist because certain batch transforms have </span>
+        <span class="c">## to run before certain incremental stages.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">pbi_stages</span><span class="p">:</span>
+            <span class="n">t_path2</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">tmp_dir_path</span><span class="p">,</span> <span class="s">&#39;trec-kba-pipeline-tmp-</span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid1</span><span class="p">()))</span>
+            <span class="c"># open destination for _run_incremental_transforms to write to</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;wb&#39;</span><span class="p">)</span>
+
+            <span class="n">input_t_chunk</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">t_path</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;rb&#39;</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">input_t_chunk</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_run_incremental_transforms</span><span class="p">(</span><span class="n">si</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">pbi_stages</span><span class="p">)</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
+            <span class="n">os</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">t_path2</span><span class="p">,</span> <span class="n">t_path</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_run_writers</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">start_count</span><span class="p">,</span> <span class="n">next_idx</span><span class="p">,</span> <span class="n">sources</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">t_path</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Run all of the writers over some intermediate chunk.</span>
+
+<span class="sd">        :param int start_count: index of the first item</span>
+<span class="sd">        :param int next_idx: index of the next item (after the last</span>
+<span class="sd">          item in this chunk)</span>
+<span class="sd">        :param list sources: source strings included in this chunk</span>
+<span class="sd">          (usually only one source)</span>
+<span class="sd">        :param str i_str: name of input file or other input</span>
+<span class="sd">        :param str t_path: location of intermediate chunk on disk</span>
+<span class="sd">        :return: list of output file paths or other outputs</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="c"># writers put the chunk somewhere, and could delete it</span>
+        <span class="n">name_info</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+            <span class="n">first</span><span class="o">=</span><span class="n">start_count</span><span class="p">,</span>
+            <span class="c"># num and md5 computed in each writers</span>
+            <span class="n">source</span><span class="o">=</span><span class="n">sources</span><span class="o">.</span><span class="n">pop</span><span class="p">(),</span>
+            <span class="p">)</span>
+
+        <span class="n">all_o_paths</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">writer</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">writers</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;running </span><span class="si">%r</span><span class="s"> on </span><span class="si">%r</span><span class="s">: </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">writer</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">name_info</span><span class="p">)</span>
+            <span class="n">o_paths</span> <span class="o">=</span> <span class="n">writer</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">,</span> <span class="n">i_str</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;loaded (</span><span class="si">%d</span><span class="s">, </span><span class="si">%d</span><span class="s">) of </span><span class="si">%r</span><span class="s"> into </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                         <span class="n">start_count</span><span class="p">,</span> <span class="n">next_idx</span> <span class="o">-</span> <span class="mi">1</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">o_paths</span><span class="p">)</span>
+            <span class="n">all_o_paths</span> <span class="o">+=</span> <span class="n">o_paths</span>
+        <span class="k">return</span> <span class="n">all_o_paths</span>
+
+    <span class="k">def</span> <span class="nf">_run_incremental_transforms</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">transforms</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Run transforms on stream item.</span>
+<span class="sd">        Item may be discarded by some transform.</span>
+<span class="sd">        Writes successful items out to current self.t_chunk</span>
+<span class="sd">        Returns transformed item or None.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="c">## operate each transform on this one StreamItem</span>
+        <span class="k">for</span> <span class="n">transform</span> <span class="ow">in</span> <span class="n">transforms</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">stream_id</span> <span class="o">=</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span>
+                <span class="n">si</span> <span class="o">=</span> <span class="n">transform</span><span class="p">(</span><span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">context</span><span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">si</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;transform </span><span class="si">%r</span><span class="s"> deleted </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span>
+                                 <span class="n">transform</span><span class="p">,</span> <span class="n">stream_id</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="bp">None</span>
+
+            <span class="k">except</span> <span class="n">TransformGivingUp</span><span class="p">:</span>
+                <span class="c">## do nothing</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;transform </span><span class="si">%r</span><span class="s"> giving up on </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                            <span class="n">transform</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;transform </span><span class="si">%r</span><span class="s"> failed on </span><span class="si">%r</span><span class="s"> from i_str=</span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> 
+                                <span class="n">transform</span><span class="p">,</span> <span class="n">si</span> <span class="ow">and</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">context</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;i_str&#39;</span><span class="p">),</span>
+                                <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+
+        <span class="k">assert</span> <span class="n">si</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span>
+
+        <span class="c">## expect to always have a stream_time</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_time</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">InvalidStreamItem</span><span class="p">(</span><span class="s">&#39;empty stream_time: </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">si</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">InvalidStreamItem</span><span class="p">(</span><span class="s">&#39;empty stream_id: </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">si</span><span class="p">)</span>
+
+        <span class="c">## put the StreamItem into the output</span>
+        <span class="k">if</span> <span class="nb">type</span><span class="p">(</span><span class="n">si</span><span class="p">)</span> <span class="o">!=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_3_0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">InvalidStreamItem</span><span class="p">(</span><span class="s">&#39;incorrect stream item object </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span>
+                                    <span class="nb">type</span><span class="p">(</span><span class="n">si</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">t_chunk</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">si</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

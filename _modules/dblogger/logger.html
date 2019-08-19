@@ -1,0 +1,264 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>dblogger.logger &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for dblogger.logger</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;:mod:`logging` handler that stores log messages in a database.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2013-2014 Diffeo, Inc.</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">cPickle</span> <span class="kn">as</span> <span class="nn">pickle</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">tblib</span> <span class="kn">import</span> <span class="n">pickling_support</span>
+    <span class="n">pickling_support</span><span class="o">.</span><span class="n">install</span><span class="p">()</span>  <span class="c"># register traceback smarts with pickle</span>
+<span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="c">## tblib does not work in python2.6...</span>
+    <span class="c">## log something?</span>
+    <span class="k">pass</span>
+
+<span class="kn">from</span> <span class="nn">dblogger.utils</span> <span class="kn">import</span> <span class="n">gen_uuid</span>
+<span class="kn">import</span> <span class="nn">kvlayer</span>
+<span class="kn">import</span> <span class="nn">yakonfig</span>
+
+
+<div class="viewcode-block" id="DatabaseLogHandler"><a class="viewcode-back" href="../../sphinx-docs/dblogger.html#dblogger.DatabaseLogHandler">[docs]</a><span class="k">class</span> <span class="nc">DatabaseLogHandler</span><span class="p">(</span><span class="n">logging</span><span class="o">.</span><span class="n">Handler</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Log handler that stores log messages in a database.</span>
+
+<span class="sd">    This uses :mod:`kvlayer` to store the actual log messages.</span>
+<span class="sd">    When the log handler is created, the caller needs to pass</span>
+<span class="sd">    in either the :mod:`kvlayer` configuration or the actual</span>
+<span class="sd">    :class:`kvlayer.AbstractStorage` object.  The constructor</span>
+<span class="sd">    also accepts a virtual table name, defaulting to ``log``.</span>
+
+<span class="sd">    If a global YAML file is used to configure the application, then</span>
+<span class="sd">    YAML reference syntax can be used to share this handler&#39;s</span>
+<span class="sd">    configuration with the global kvlayer configuration.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        kvlayer: &amp;kvlayer</span>
+<span class="sd">          storage_type: redis</span>
+<span class="sd">          storage_addresses: [ &#39;redis.example.com:6379&#39; ]</span>
+<span class="sd">        logging:</span>
+<span class="sd">          handlers:</span>
+<span class="sd">            db:</span>
+<span class="sd">              class: dblogger.DatabaseLogHandler</span>
+<span class="sd">              storage_config: *kvlayer</span>
+
+<span class="sd">    Log messages are stored in a table with a single UUID key, where</span>
+<span class="sd">    the high-order bits of the UUID are in order by time.  The actual</span>
+<span class="sd">    table values are serialized JSON representations of the log</span>
+<span class="sd">    records.</span>
+
+<span class="sd">    This log handlers adds a format string property ``%(humantime)s``</span>
+<span class="sd">    with a time in a fixed format, and ``%(exc_text)s`` with the</span>
+<span class="sd">    formatted traceback from an exception.  These properties are also</span>
+<span class="sd">    included in the JSON stored in the database..</span>
+
+<span class="sd">    .. automethod:: __init__</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+<div class="viewcode-block" id="DatabaseLogHandler.__init__"><a class="viewcode-back" href="../../sphinx-docs/dblogger.html#dblogger.DatabaseLogHandler.__init__">[docs]</a>    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">storage_client</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">table_name</span><span class="o">=</span><span class="s">&quot;log&quot;</span><span class="p">,</span>
+                 <span class="n">storage_config</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Create a new database log handler.</span>
+
+<span class="sd">        You must either pass in ``storage_client``, an actual kvlayer</span>
+<span class="sd">        client object, or ``storage_config``, a dictionary which will</span>
+<span class="sd">        be passed to ``kvlayer.client()``.  Log messages</span>
+<span class="sd">        will be stored in the table ``table_name``.</span>
+
+<span class="sd">        :param storage_client: existing storage client</span>
+<span class="sd">        :type storage_client: :class:`kvlayer.AbstractStorage`</span>
+<span class="sd">        :param str table_name: virtual table name</span>
+<span class="sd">        :param dict storage_config: configuration for new storage client</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">DatabaseLogHandler</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">storage_client</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">storage_config</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s">&#39;must pass either storage_client or &#39;</span>
+                                   <span class="s">&#39;storage_config&#39;</span><span class="p">)</span>
+            <span class="k">with</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">defaulted_config</span><span class="p">(</span>
+                    <span class="p">[</span><span class="n">kvlayer</span><span class="p">],</span> <span class="n">config</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">kvlayer</span><span class="o">=</span><span class="n">storage_config</span><span class="p">)):</span>
+                <span class="n">storage_client</span> <span class="o">=</span> <span class="n">kvlayer</span><span class="o">.</span><span class="n">client</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">storage</span> <span class="o">=</span> <span class="n">storage_client</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">table_name</span> <span class="o">=</span> <span class="n">table_name</span>
+        <span class="n">storage_client</span><span class="o">.</span><span class="n">setup_namespace</span><span class="p">({</span><span class="n">table_name</span><span class="p">:</span> <span class="mi">1</span><span class="p">})</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sequence_number</span> <span class="o">=</span> <span class="mi">0</span>
+</div>
+    <span class="k">def</span> <span class="nf">formatDBTime</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">):</span>
+        <span class="n">record</span><span class="o">.</span><span class="n">humantime</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s">&#39;%Y-%m-</span><span class="si">%d</span><span class="s">T%H:%M:%S-%Z&#39;</span><span class="p">,</span>
+                                         <span class="n">time</span><span class="o">.</span><span class="n">localtime</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">created</span><span class="p">))</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span> <span class="nf">deserialize</span><span class="p">(</span><span class="n">cls</span><span class="p">,</span> <span class="n">rec_pickle</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">xdict</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">rec_pickle</span><span class="p">)</span>
+
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">xdict</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;msg&#39;</span><span class="p">:</span> <span class="s">&#39;warning!!!! failed to unpickle: </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">rec_pickle</span><span class="p">}</span>
+
+        <span class="k">return</span> <span class="n">logging</span><span class="o">.</span><span class="n">makeLogRecord</span><span class="p">(</span><span class="n">xdict</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">emit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">record</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        handle a record by formatting parts of it, and pushing it into</span>
+<span class="sd">        storage.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">formatDBTime</span><span class="p">(</span><span class="n">record</span><span class="p">)</span>
+
+        <span class="n">failure</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">args</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="c"># cannot serialize arbitrary args, because they might not be</span>
+                <span class="c"># picklable, so do the string now</span>
+                <span class="n">record</span><span class="o">.</span><span class="n">msg</span> <span class="o">=</span> <span class="n">record</span><span class="o">.</span><span class="n">msg</span> <span class="o">%</span> <span class="n">record</span><span class="o">.</span><span class="n">args</span>
+                <span class="n">record</span><span class="o">.</span><span class="n">args</span> <span class="o">=</span> <span class="bp">None</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;failed to run string formatting on &#39;</span>
+                               <span class="s">&#39;provided args&#39;</span><span class="p">)</span>
+                <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">(</span><span class="n">exc</span><span class="p">))</span>
+                <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;record.msg = </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">record</span><span class="o">.</span><span class="n">msg</span><span class="p">)</span>
+                <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;record.args = </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">args</span><span class="p">,))</span>
+                <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;logging failed so shutting down entire &#39;</span>
+                               <span class="s">&#39;process&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">record</span><span class="o">.</span><span class="n">exc_info</span><span class="p">:</span>
+            <span class="n">record</span><span class="o">.</span><span class="n">exc_text</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">_defaultFormatter</span><span class="o">.</span><span class="n">formatException</span><span class="p">(</span>
+                <span class="n">record</span><span class="o">.</span><span class="n">exc_info</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">record</span><span class="o">.</span><span class="n">exc_text</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+
+        <span class="c"># NB: This is safe because emit() is called from handler() under</span>
+        <span class="c"># self.lock</span>
+        <span class="n">new_uuid</span> <span class="o">=</span> <span class="n">gen_uuid</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">created</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sequence_number</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sequence_number</span> <span class="o">+=</span> <span class="mi">1</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">dbrec</span> <span class="o">=</span> <span class="n">pickle</span><span class="o">.</span><span class="n">dumps</span><span class="p">(</span><span class="n">record</span><span class="o">.</span><span class="n">__dict__</span><span class="p">,</span>
+                                 <span class="n">protocol</span><span class="o">=</span><span class="n">pickle</span><span class="o">.</span><span class="n">HIGHEST_PROTOCOL</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;failed to dump log record, will shutdown&#39;</span><span class="p">)</span>
+            <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">(</span><span class="n">exc</span><span class="p">))</span>
+            <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;failed to pickle the __dict__ on: record=</span><span class="si">%r</span><span class="s">&#39;</span>
+                           <span class="o">%</span> <span class="n">record</span><span class="p">)</span>
+            <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;failed to pickle: record.__dict__=</span><span class="si">%r</span><span class="s">&#39;</span>
+                           <span class="o">%</span> <span class="n">record</span><span class="o">.</span><span class="n">__dict__</span><span class="p">)</span>
+            <span class="n">failure</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s">&#39;logging failed so shutting down entire process&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">failure</span><span class="p">:</span>
+            <span class="n">dbrec</span> <span class="o">=</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">failure</span><span class="p">)</span>
+
+        <span class="c"># send it to the DB... especially if it is a failure</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">storage</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">table_name</span><span class="p">,</span> <span class="p">((</span><span class="n">new_uuid</span><span class="p">,),</span> <span class="n">dbrec</span><span class="p">))</span>
+
+        <span class="k">if</span> <span class="n">failure</span><span class="p">:</span>
+            <span class="c"># shutdown the process when logging fails</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">exit</span><span class="p">(</span><span class="n">dbrec</span><span class="p">)</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

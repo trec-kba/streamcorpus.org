@@ -1,0 +1,423 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>yakonfig.configurable &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for yakonfig.configurable</h1><div class="highlight"><pre>
+<span class="sd">&quot;&quot;&quot;Base type for objects supporting yakonfig.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2014-2015 Diffeo, Inc.</span>
+
+<span class="sd">Purpose</span>
+<span class="sd">=======</span>
+
+<span class="sd">Provides a common place to declare command-line arguments and default</span>
+<span class="sd">configuration to yakonfig.  Configurable object classes can be passed</span>
+<span class="sd">into :func:`yakonfig.parse_args`.  This will cause yakonfig to</span>
+<span class="sd">instantiate the relevant command-line arguments, parse any inbound</span>
+<span class="sd">YAML configuration, fill in defaults, and produce a complete</span>
+<span class="sd">configuration.</span>
+
+<span class="sd">Only :attr:`Configurable.config_name` is strictly required, the</span>
+<span class="sd">remainder of the functions can be absent or have defaults similar to</span>
+<span class="sd">what is here.</span>
+
+<span class="sd">Implementations of these methods may also find :func:`check_subconfig`</span>
+<span class="sd">useful.</span>
+
+<span class="sd">Implementation Details</span>
+<span class="sd">======================</span>
+
+<span class="sd">:func:`yakonfig.parse_args` doesn&#39;t actually require</span>
+<span class="sd">:class:`Configurable` subclasses as its parameter; any object (e.g.,</span>
+<span class="sd">module objects) that include the required names can be used.</span>
+
+<span class="sd">Module Contents</span>
+<span class="sd">===============</span>
+
+<span class="sd">&quot;&quot;&quot;</span>
+
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">abc</span>
+<span class="kn">import</span> <span class="nn">collections</span>
+
+<span class="kn">from</span> <span class="nn">.exceptions</span> <span class="kn">import</span> <span class="n">ProgrammerError</span>
+
+<div class="viewcode-block" id="Configurable"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.Configurable">[docs]</a><span class="k">class</span> <span class="nc">Configurable</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Description of yakonfig configuration.</span>
+
+<span class="sd">    This class provides a common place to define information that</span>
+<span class="sd">    drives the configuration process.  Yakonfig doesn&#39;t actually</span>
+<span class="sd">    require instances of this type, merely objects that provide the</span>
+<span class="sd">    object and method names described here, and of these only</span>
+<span class="sd">    :attr:`config_name` is truly required.</span>
+
+<span class="sd">    For instance, if you create a subclass of this and then use</span>
+<span class="sd">    yakonfig to configure it, yakonfig will fill in the default</span>
+<span class="sd">    values described here</span>
+
+<span class="sd">    &gt;&gt;&gt; class MyConfigurable(object):</span>
+<span class="sd">    ...     config_name = &quot;me&quot;</span>
+<span class="sd">    ...     default_config = { &#39;key&#39;: &#39;value&#39; }</span>
+<span class="sd">    &gt;&gt;&gt; yakonfig.set_default_config([MyConfigurable])</span>
+<span class="sd">    &gt;&gt;&gt; yaml.dump(yakonfig.get_global_config())</span>
+<span class="sd">    me:</span>
+<span class="sd">        key: value</span>
+
+<span class="sd">    If you subclass this, you will need to pass instances of this</span>
+<span class="sd">    object to the top-level yakonfig methods, not the class itself.  A</span>
+<span class="sd">    corollary to this is that it is possible for the command-line</span>
+<span class="sd">    arguments to vary based on parameters to this object&#39;s</span>
+<span class="sd">    constructor.</span>
+
+<span class="sd">    If you want command-line arguments to be able to affect the</span>
+<span class="sd">    configuration this object describes, add them in</span>
+<span class="sd">    :meth:`add_arguments()`, and set :attr:`runtime_keys` to a mapping</span>
+<span class="sd">    from argparse name to config key name.</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">__metaclass__</span> <span class="o">=</span> <span class="n">abc</span><span class="o">.</span><span class="n">ABCMeta</span>
+
+    <span class="nd">@abc.abstractproperty</span>
+    <span class="k">def</span> <span class="nf">config_name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Name of this configuration block.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">default_config</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Default values for configuration.</span>
+
+<span class="sd">        This is a dictionary mapping configuration key name to configuration</span>
+<span class="sd">        value.  It should not include any configured sub-objects.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{}</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">services</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        A list of services that a parent configuration can inject.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">sub_modules</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Modules this module controls.</span>
+
+<span class="sd">        This is any iterable containing a sequence of</span>
+<span class="sd">        :class:`Configurable` objects (or objects that act like them).</span>
+<span class="sd">        Those configurations will be stored under this object&#39;s</span>
+<span class="sd">        configuration, with the names specified by their</span>
+<span class="sd">        :attr:`config_name` properties.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[]</span>
+
+<div class="viewcode-block" id="Configurable.add_arguments"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.Configurable.add_arguments">[docs]</a>    <span class="k">def</span> <span class="nf">add_arguments</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parser</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Add additional command-line arguments to `parser`.</span>
+
+<span class="sd">        :param parser: command-line argument parser</span>
+<span class="sd">        :type parser: :class:`argparse.ArgumentParser`</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+</div>
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">runtime_keys</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Mapping of argparse keys to configuration keys.</span>
+
+<span class="sd">        This is used to capture the command-line arguments in</span>
+<span class="sd">        :meth:`add_arguments`.  It is a dictionary mapping argparse</span>
+<span class="sd">        argument name to configuration key name.</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{}</span>
+
+<div class="viewcode-block" id="Configurable.replace_config"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.Configurable.replace_config">[docs]</a>    <span class="k">def</span> <span class="nf">replace_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Look at `config` and return a new :class:`Configurable`.</span>
+
+<span class="sd">        This can, for instance, load external modules pointed to by</span>
+<span class="sd">        a configuration file, and return a new :class:`ProxyConfigurable`</span>
+<span class="sd">        for this with a new :attr:`sub_modules` list.  The yakonfig</span>
+<span class="sd">        framework will not recursively call this function on submodules.</span>
+
+<span class="sd">        :param dict config: configuration of this object and its children</span>
+<span class="sd">        :param str name: name of the configuration block</span>
+<span class="sd">        :return: replacement for `self`</span>
+<span class="sd">        :rtype: :class:`Configurable`</span>
+<span class="sd">        :raises yakonfig.ConfigurationError: if the new</span>
+<span class="sd">          configuration cannot be generated</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span>
+</div>
+<div class="viewcode-block" id="Configurable.discover_config"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.Configurable.discover_config">[docs]</a>    <span class="k">def</span> <span class="nf">discover_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Fill in missing values in `config` from the environment.</span>
+
+<span class="sd">        This can literally look in :attr:`os.environ` to pick up values</span>
+<span class="sd">        such as ``$TMPDIR``, or values published from a container system</span>
+<span class="sd">        such as `Docker &lt;http://www.docker.com/&gt;`_.  It could also</span>
+<span class="sd">        look at an external system, such as `Apache ZooKeeper</span>
+<span class="sd">        &lt;http://zookeeper.apache.org/&gt;`_ or `CoreOS etcd</span>
+<span class="sd">        &lt;https://coreos.com/docs/distributed-configuration/etcd-api/&gt;`_</span>
+<span class="sd">        to find information such as what systems exist in the cluster.</span>
+
+<span class="sd">        This method should limit itself to filling in missing values.</span>
+<span class="sd">        It should modify `config` in place.  The framework will call</span>
+<span class="sd">        this method once, walking the configurable tree for you.</span>
+<span class="sd">        `config` will not have default values applied to it at this</span>
+<span class="sd">        point.  If :meth:`replace_config` is also implemented, this</span>
+<span class="sd">        method will be called only on the new object returned by</span>
+<span class="sd">        :meth:`replace_config`.  Implementations of this method should</span>
+<span class="sd">        be careful to trap exceptions; failure to reach an external</span>
+<span class="sd">        configuration management system should not break initial</span>
+<span class="sd">        configuration.</span>
+
+<span class="sd">        :param dict config: configuration of this object and its</span>
+<span class="sd">          children (read/write, does not include defaults)</span>
+<span class="sd">        :param str name: name of the configuration block</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">pass</span>
+</div>
+<div class="viewcode-block" id="Configurable.check_config"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.Configurable.check_config">[docs]</a>    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Validate the configuration of this object.</span>
+
+<span class="sd">        If something is missing, incorrect, or inconsistent, raise a</span>
+<span class="sd">        :exc:`yakonfig.ConfigurationError`.</span>
+
+<span class="sd">        :param dict config: configuration of this object and its children</span>
+<span class="sd">        :param str name: name of the configuration block, ending in</span>
+<span class="sd">          :attr:`config_name`</span>
+<span class="sd">        :raises yakonfig.ConfigurationError: if the</span>
+<span class="sd">          configuration is invalid in some way</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+</div>
+<div class="viewcode-block" id="Configurable.normalize_config"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.Configurable.normalize_config">[docs]</a>    <span class="k">def</span> <span class="nf">normalize_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;Rewrite the configuration of this object.</span>
+
+<span class="sd">        This has the opportunity to, for example, replace paths with</span>
+<span class="sd">        absolute paths, and to push configuration into sub-module</span>
+<span class="sd">        configuration.  This may alter `config` in place.</span>
+
+<span class="sd">        :param dict config: configuration of this object and its children</span>
+
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">pass</span>
+</div></div>
+<div class="viewcode-block" id="ProxyConfigurable"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.ProxyConfigurable">[docs]</a><span class="k">class</span> <span class="nc">ProxyConfigurable</span><span class="p">(</span><span class="n">Configurable</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;A yakonfig configurable object that passes calls on to something else.</span>
+
+<span class="sd">    The object this proxies can be any any configurable thing, not</span>
+<span class="sd">    necessarily a :class:`Configurable` instance.  Any methods that</span>
+<span class="sd">    are not implemented in the underlying object return default</span>
+<span class="sd">    values.</span>
+
+<span class="sd">    This class is intended to be used as a base class for</span>
+<span class="sd">    :meth:`Configurable.replace_config` implementations.</span>
+
+<span class="sd">    .. automethod:: __init__</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+
+<div class="viewcode-block" id="ProxyConfigurable.__init__"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.ProxyConfigurable.__init__">[docs]</a>    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a new proxy configurable.</span>
+
+<span class="sd">        :param config: object to pass options on to</span>
+<span class="sd">        :type config: :class:`Configurable`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+</div>
+    <span class="k">def</span> <span class="nf">_property</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="nb">super</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">,</span> <span class="bp">self</span><span class="p">),</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">config_name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_property</span><span class="p">(</span><span class="s">&#39;config_name&#39;</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">default_config</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_property</span><span class="p">(</span><span class="s">&#39;default_config&#39;</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">sub_modules</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_property</span><span class="p">(</span><span class="s">&#39;sub_modules&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">add_arguments</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parser</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;add_arguments&#39;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;add_arguments&#39;</span><span class="p">)(</span><span class="n">parser</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">add_arguments</span><span class="p">(</span><span class="n">parser</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">runtime_keys</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_property</span><span class="p">(</span><span class="s">&#39;runtime_keys&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">replace_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;replace_config&#39;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;replace_config&#39;</span><span class="p">)(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">replace_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">discover_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;discover_config&#39;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;discover_config&#39;</span><span class="p">)(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">discover_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s">&#39;&#39;</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;check_config&#39;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;check_config&#39;</span><span class="p">)(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">check_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">normalize_config</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;normalize_config&#39;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="s">&#39;normalize_config&#39;</span><span class="p">)(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">return</span> <span class="nb">super</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">normalize_config</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="NewSubModules"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.NewSubModules">[docs]</a><span class="k">class</span> <span class="nc">NewSubModules</span><span class="p">(</span><span class="n">ProxyConfigurable</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;A proxy that only replaces the :attr:`sub_modules` list.</span>
+
+<span class="sd">    This is expected to be the common use case for</span>
+<span class="sd">    :meth:`replace_config()`.</span>
+
+<span class="sd">    .. automethod: __init__</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">sub_modules</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Create a new proxy with new :attr:`sub_modules`.</span>
+
+<span class="sd">        :param config: original `Configurable` object</span>
+<span class="sd">        :type config: :class:`Configurable`</span>
+<span class="sd">        :param sub_modules: new `sub_modules` list</span>
+<span class="sd">        :type sub_modules: list of :class:`Configurable`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">NewSubModules</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_sub_modules</span> <span class="o">=</span> <span class="n">sub_modules</span> <span class="ow">or</span> <span class="p">[]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">sub_modules</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sub_modules</span>
+</div>
+<div class="viewcode-block" id="check_subconfig"><a class="viewcode-back" href="../../sphinx-docs/yakonfig.html#yakonfig.check_subconfig">[docs]</a><span class="k">def</span> <span class="nf">check_subconfig</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">sub</span><span class="p">):</span>
+    <span class="sd">&quot;&quot;&quot;Validate the configuration of an object within this.</span>
+
+<span class="sd">    This calls :meth:`Configurable.check_config` or equivalent on `sub`.</span>
+<span class="sd">    A dictionary configuration for `sub` is required in `config`.</span>
+
+<span class="sd">    &gt;&gt;&gt; def check_config(config, name):</span>
+<span class="sd">    ...     for sub in sub_modules:</span>
+<span class="sd">    ...         check_subconfig(config, name, sub)</span>
+
+<span class="sd">    :param dict config: parent configuration</span>
+<span class="sd">    :param str name: name of the parent configuration block</span>
+<span class="sd">    :param sub: Configurable-like subobject to check</span>
+<span class="sd">    :raise yakonfig.ConfigurationError: if there is no</span>
+<span class="sd">      configuration for `sub`, or it is not a dictionary</span>
+
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">subname</span> <span class="o">=</span> <span class="n">sub</span><span class="o">.</span><span class="n">config_name</span>
+    <span class="n">subconfig</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">subname</span><span class="p">,</span> <span class="p">{})</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">subconfig</span><span class="p">,</span> <span class="n">collections</span><span class="o">.</span><span class="n">Mapping</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="n">ProgrammerError</span><span class="p">(</span><span class="s">&#39;configuration for {0} in {1} must be a mapping&#39;</span>
+                              <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">subname</span><span class="p">,</span> <span class="n">name</span><span class="p">))</span>
+    <span class="n">checker</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="n">sub</span><span class="p">,</span> <span class="s">&#39;check_config&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">checker</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">checker</span><span class="p">(</span><span class="n">subconfig</span><span class="p">,</span> <span class="s">&#39;{0}.{1}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">subname</span><span class="p">))</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

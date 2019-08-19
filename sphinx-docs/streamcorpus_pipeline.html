@@ -1,0 +1,1951 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>3. streamcorpus_pipeline — stream item processing framework &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../index.html" />
+    <link rel="next" title="4. yakonfig — global configuration management tools" href="yakonfig.html" />
+    <link rel="prev" title="2. streamcorpus — single-document data representation" href="streamcorpus.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="yakonfig.html" title="4. yakonfig — global configuration management tools"
+             accesskey="N">next</a> |</li>
+        <li class="right" >
+          <a href="streamcorpus.html" title="2. streamcorpus — single-document data representation"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <div class="section" id="module-streamcorpus_pipeline">
+<span id="streamcorpus-pipeline-stream-item-processing-framework"></span><h1>3. <a class="reference internal" href="#module-streamcorpus_pipeline" title="streamcorpus_pipeline"><code class="xref py py-mod docutils literal"><span class="pre">streamcorpus_pipeline</span></code></a> &#8212; stream item processing framework<a class="headerlink" href="#module-streamcorpus_pipeline" title="Permalink to this headline">¶</a></h1>
+<p>Stream item processing framework.</p>
+<p>The streamcorpus pipeline is a basic framework for processing
+<a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamItem</span></code></a> objects.  Stream items are passed
+through the pipeline, with different
+<a class="reference internal" href="#module-streamcorpus_pipeline.stages" title="streamcorpus_pipeline.stages"><code class="xref py py-mod docutils literal"><span class="pre">stages</span></code></a> incrementally adding parts to it.
+The general flow of the pipeline is as follows:</p>
+<ol class="arabic simple">
+<li>A <em>reader</em> stage produces an initial set of stream items, one per
+input document.  Many readers, such as
+<a class="reference internal" href="#streamcorpus_pipeline._local_storage.from_local_chunks" title="streamcorpus_pipeline._local_storage.from_local_chunks"><code class="xref py py-mod docutils literal"><span class="pre">from_local_chunks</span></code></a> and
+<a class="reference internal" href="#streamcorpus_pipeline._s3_storage.from_s3_chunks" title="streamcorpus_pipeline._s3_storage.from_s3_chunks"><code class="xref py py-mod docutils literal"><span class="pre">from_s3_chunks</span></code></a>, expect to
+take in <a class="reference internal" href="streamcorpus.html#streamcorpus.Chunk" title="streamcorpus.Chunk"><code class="xref py py-mod docutils literal"><span class="pre">streamcorpus.Chunk</span></code></a> files with fully populated stream
+items.
+<a class="reference internal" href="#streamcorpus_pipeline._yaml_files_list.yaml_files_list" title="streamcorpus_pipeline._yaml_files_list.yaml_files_list"><code class="xref py py-mod docutils literal"><span class="pre">yaml_files_list</span></code></a> takes
+a listing of plain external files from a YAML file.  Other
+processing may require writing a custom reader stage.  In the most
+basic case, this produces a stream item with only the <code class="docutils literal"><span class="pre">body.raw</span></code>
+field set.</li>
+<li>A set of <em>transforms</em> annotates and fills in parts of the stream
+item.  If the inbound documents contain only raw content, it is
+common to run <a class="reference internal" href="#streamcorpus_pipeline._language.language" title="streamcorpus_pipeline._language.language"><code class="xref py py-mod docutils literal"><span class="pre">language</span></code></a> to
+detect the language, and to run dedicated stages to produce
+<a class="reference internal" href="#streamcorpus_pipeline._clean_html.clean_html" title="streamcorpus_pipeline._clean_html.clean_html"><code class="xref py py-mod docutils literal"><span class="pre">clean_html</span></code></a> and
+<a class="reference internal" href="#streamcorpus_pipeline._clean_visible.clean_visible" title="streamcorpus_pipeline._clean_visible.clean_visible"><code class="xref py py-mod docutils literal"><span class="pre">clean_visible</span></code></a> forms of
+the body.  Annotators such as
+<a class="reference internal" href="#streamcorpus_pipeline._hyperlink_labels.hyperlink_labels" title="streamcorpus_pipeline._hyperlink_labels.hyperlink_labels"><code class="xref py py-mod docutils literal"><span class="pre">hyperlink_labels</span></code></a>
+will add labels at known offsets within the entire document.</li>
+<li>A <em>tokenizer</em> reads the actual text and parses it into parts of
+speech, creating token objects in the stream item.  A tokenizer
+is not included in this package, but there are bundled stages
+to run <a class="reference internal" href="#streamcorpus_pipeline._tokenizer.nltk_tokenizer" title="streamcorpus_pipeline._tokenizer.nltk_tokenizer"><code class="xref py py-mod docutils literal"><span class="pre">nltk_tokenizer</span></code></a>,
+<a class="reference internal" href="#streamcorpus_pipeline._lingpipe.lingpipe" title="streamcorpus_pipeline._lingpipe.lingpipe"><code class="xref py py-mod docutils literal"><span class="pre">lingpipe</span></code></a>, and
+<a class="reference internal" href="#streamcorpus_pipeline._serif.serif" title="streamcorpus_pipeline._serif.serif"><code class="xref py py-mod docutils literal"><span class="pre">serif</span></code></a>.</li>
+<li>An <em>aligner</em> reads labels at known offsets in the document and
+the output of the tokenizer and attempts to move the labels to
+be attached to their corresponding tokens.  The aligner is generally
+run as part of the tokenizer rather than as a separate stage.</li>
+<li>Additional transforms could be run at this point on the tokenized
+output, though this is rare.</li>
+<li>A <em>writer</em> places the fully processed stream items somewhere.
+<a class="reference internal" href="#streamcorpus_pipeline._local_storage.to_local_chunks" title="streamcorpus_pipeline._local_storage.to_local_chunks"><code class="xref py py-mod docutils literal"><span class="pre">to_local_chunks</span></code></a> is
+useful for local testing and development; networked storage via
+<a class="reference internal" href="#streamcorpus_pipeline._kvlayer.to_kvlayer" title="streamcorpus_pipeline._kvlayer.to_kvlayer"><code class="xref py py-mod docutils literal"><span class="pre">to_kvlayer</span></code></a> or
+<a class="reference internal" href="#streamcorpus_pipeline._s3_storage.to_s3_chunks" title="streamcorpus_pipeline._s3_storage.to_s3_chunks"><code class="xref py py-mod docutils literal"><span class="pre">to_s3_chunks</span></code></a> is helpful
+for publishing the chunk files to other developers and tools.</li>
+</ol>
+<div class="section" id="module-streamcorpus_pipeline.run">
+<span id="streamcorpus-pipeline"></span><h2>3.1. <strong class="command">streamcorpus_pipeline</strong><a class="headerlink" href="#module-streamcorpus_pipeline.run" title="Permalink to this headline">¶</a></h2>
+<p><strong class="command">streamcorpus_pipeline</strong> is the command-line entry point to the
+pipeline.</p>
+<p>The supplied configuration must have a <a class="reference internal" href="#module-streamcorpus_pipeline" title="streamcorpus_pipeline"><code class="xref py py-mod docutils literal"><span class="pre">streamcorpus_pipeline</span></code></a>
+section.  Other required configuration depends on the specific stages
+in use and the rest of the operating environment; for instance, if the
+<a class="reference internal" href="#streamcorpus_pipeline._kvlayer.to_kvlayer" title="streamcorpus_pipeline._kvlayer.to_kvlayer"><code class="xref py py-class docutils literal"><span class="pre">to_kvlayer</span></code></a> writer stage is in
+use, then the configuration must also contain a top-level
+<a class="reference internal" href="kvlayer.html#module-kvlayer" title="kvlayer"><code class="xref py py-mod docutils literal"><span class="pre">kvlayer</span></code></a> section.</p>
+<p>This supports the standard <a class="reference internal" href="yakonfig.html#cmdoption-yakonfig--config"><code class="xref std std-option docutils literal"><span class="pre">--config</span></code></a>,
+<a class="reference internal" href="yakonfig.html#cmdoption-yakonfig--dump-config"><code class="xref std std-option docutils literal"><span class="pre">--dump-config</span></code></a>, <a class="reference internal" href="dblogger.html#cmdoption-dblogger--verbose"><code class="xref std std-option docutils literal"><span class="pre">--verbose</span></code></a>, <a class="reference internal" href="dblogger.html#cmdoption-dblogger--quiet"><code class="xref std std-option docutils literal"><span class="pre">--quiet</span></code></a>, and
+<a class="reference internal" href="dblogger.html#cmdoption-dblogger--debug"><code class="xref std std-option docutils literal"><span class="pre">--debug</span></code></a> options.  It supports the
+following additional options:</p>
+<dl class="option">
+<dt id="cmdoption-streamcorpus_pipeline--input">
+<span id="cmdoption-streamcorpus_pipeline-i"></span><code class="descname">--input</code><code class="descclassname"> &lt;file.sc&gt;</code><code class="descclassname">, </code><code class="descname">-i</code><code class="descclassname"> &lt;file.sc&gt;</code><a class="headerlink" href="#cmdoption-streamcorpus_pipeline--input" title="Permalink to this definition">¶</a></dt>
+<dd><p>Names the input file.  If the file name is <code class="docutils literal"><span class="pre">-</span></code> then standard
+input is used, if this makes sense.  Some reader stages may use the
+file name specially.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-streamcorpus_pipeline--in-glob">
+<code class="descname">--in-glob</code><code class="descclassname"> &lt;pattern&gt;</code><a class="headerlink" href="#cmdoption-streamcorpus_pipeline--in-glob" title="Permalink to this definition">¶</a></dt>
+<dd><p>Runs the pipeline once for each file matching the shell <a class="reference external" href="http://docs.python.org/library/glob.html#module-glob" title="(in Python v2.7)"><code class="xref py py-mod docutils literal"><span class="pre">glob</span></code></a>
+<cite>pattern</cite>.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="module-streamcorpus_pipeline._directory">
+<span id="streamcorpus-directory"></span><h2>3.2. <strong class="command">streamcorpus_directory</strong><a class="headerlink" href="#module-streamcorpus_pipeline._directory" title="Permalink to this headline">¶</a></h2>
+<p>Process entire directories using streamcorpus_pipeline.</p>
+<p><strong class="command">streamcorpus_directory</strong> reads an entire directory through
+the streamcorpus pipeline.  This allows work to be distributed using
+the <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> distributed work system, with an implied
+assumption that all systems running a rejester worker for the given
+namespace have access to the local file storage space, either because
+the only worker is on the local system or because the named directory
+is on a shared networked filesystem.</p>
+<p>The command is followed by a list of directory names, or other inputs.
+By default each named directory is scanned, and each file in each
+directory is submitted as an input to the pipeline.  A <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a>
+job is created for each file.</p>
+<p>Note that <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> is typically used to distribute jobs acress
+a cluster of systems.  This program only submits the file names as
+jobs; it does not submit actual file contents.  If the pipeline is
+configured with a reader such as
+<a class="reference internal" href="#streamcorpus_pipeline._s3_storage.from_s3_chunks" title="streamcorpus_pipeline._s3_storage.from_s3_chunks"><code class="xref py py-mod docutils literal"><span class="pre">from_s3_chunks</span></code></a>, this tool
+can be used to submit a sequence of S3 source paths, either on the
+command line directly using the <a class="reference internal" href="#cmdoption-streamcorpus_directory--files"><code class="xref std std-option docutils literal"><span class="pre">--files</span></code></a> option, or by collecting the paths
+into a text file and using <a class="reference internal" href="#cmdoption-streamcorpus_directory--file-lists"><code class="xref std std-option docutils literal"><span class="pre">--file-lists</span></code></a>.  If the pipeline is configured
+with a reader such as
+<a class="reference internal" href="#streamcorpus_pipeline._local_storage.from_local_chunks" title="streamcorpus_pipeline._local_storage.from_local_chunks"><code class="xref py py-mod docutils literal"><span class="pre">from_local_chunks</span></code></a>, the
+caller must ensure that every system running a worker process has a
+copy of the source files.</p>
+<p>This supports the standard <a class="reference internal" href="yakonfig.html#cmdoption-yakonfig--config"><code class="xref std std-option docutils literal"><span class="pre">--config</span></code></a>,
+<a class="reference internal" href="yakonfig.html#cmdoption-yakonfig--dump-config"><code class="xref std std-option docutils literal"><span class="pre">--dump-config</span></code></a>, <a class="reference internal" href="dblogger.html#cmdoption-dblogger--verbose"><code class="xref std std-option docutils literal"><span class="pre">--verbose</span></code></a>, <a class="reference internal" href="dblogger.html#cmdoption-dblogger--quiet"><code class="xref std std-option docutils literal"><span class="pre">--quiet</span></code></a>, and
+<a class="reference internal" href="dblogger.html#cmdoption-dblogger--debug"><code class="xref std std-option docutils literal"><span class="pre">--debug</span></code></a> options.  It supports the
+following additional options:</p>
+<dl class="option">
+<dt id="cmdoption-streamcorpus_directory--directories">
+<code class="descname">--directories</code><code class="descclassname"></code><a class="headerlink" href="#cmdoption-streamcorpus_directory--directories" title="Permalink to this definition">¶</a></dt>
+<dd><p>The positional arguments are interpreted as directory names.  Each
+named directory is scanned recursively, and every file in or under
+that directory is used as an input to the pipeline.  This is the
+default mode.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-streamcorpus_directory--files">
+<code class="descname">--files</code><code class="descclassname"></code><a class="headerlink" href="#cmdoption-streamcorpus_directory--files" title="Permalink to this definition">¶</a></dt>
+<dd><p>The positional arguments are interpreted as file names.  Each named
+file is used as an input to the pipeline.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-streamcorpus_directory--file-lists">
+<code class="descname">--file-lists</code><code class="descclassname"></code><a class="headerlink" href="#cmdoption-streamcorpus_directory--file-lists" title="Permalink to this definition">¶</a></dt>
+<dd><p>The positional arguments are file names.  Each named file is a text
+file containing a list of input filenames or other sources, one to
+a line.  These are used as inputs to the pipeline.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-streamcorpus_directory--standalone">
+<code class="descname">--standalone</code><code class="descclassname"></code><a class="headerlink" href="#cmdoption-streamcorpus_directory--standalone" title="Permalink to this definition">¶</a></dt>
+<dd><p>Process all of the files in the directory, sequentially, then exit.
+This may be more convenient for debugging the pipeline configuration.
+Does not require rejester configuration.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-streamcorpus_directory--rejester">
+<code class="descname">--rejester</code><code class="descclassname"></code><a class="headerlink" href="#cmdoption-streamcorpus_directory--rejester" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> work units, then exit.  The configuration
+must contain complete <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> configuration.  This is the
+default mode.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-streamcorpus_directory--work-spec">
+<code class="descname">--work-spec</code><code class="descclassname"> &lt;name&gt;</code><a class="headerlink" href="#cmdoption-streamcorpus_directory--work-spec" title="Permalink to this definition">¶</a></dt>
+<dd><p>Use <cite>name</cite> as the name of the <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> work spec.  Defaults
+to <code class="docutils literal"><span class="pre">streamcorpus_directory</span></code>.</p>
+</dd></dl>
+
+<dl class="option">
+<dt id="cmdoption-streamcorpus_directory--nice">
+<code class="descname">--nice</code><code class="descclassname"> &lt;n&gt;</code><a class="headerlink" href="#cmdoption-streamcorpus_directory--nice" title="Permalink to this definition">¶</a></dt>
+<dd><p>Deprioritize the submitted jobs in <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a>.  <cite>n</cite> can be
+a relative score between 0 and 20.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="module-streamcorpus_pipeline._pipeline">
+<span id="pipeline-configuration-and-execution"></span><h2>3.3. Pipeline configuration and execution<a class="headerlink" href="#module-streamcorpus_pipeline._pipeline" title="Permalink to this headline">¶</a></h2>
+<p>Configuration and execution of the actual pipeline.</p>
+<p>The <a class="reference internal" href="#streamcorpus_pipeline._pipeline.Pipeline" title="streamcorpus_pipeline._pipeline.Pipeline"><code class="xref py py-class docutils literal"><span class="pre">Pipeline</span></code></a> itself consists of a series of
+<a class="reference internal" href="#module-streamcorpus_pipeline.stages" title="streamcorpus_pipeline.stages"><code class="xref py py-mod docutils literal"><span class="pre">stages</span></code></a>.  These are broken into several
+categories:</p>
+<ul class="simple">
+<li>Exactly one <em>reader</em> runs first, producing a sequence of
+<a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamItem</span></code></a> objects.</li>
+<li>The stream items are fed through <em>incremental transforms</em>, which take
+one stream item in and produce one stream item out.</li>
+<li>All of the stream items are written to a file, and <em>batch transforms</em>
+can operate on the entire collection of stream items at once.</li>
+<li><em>Post-batch incremental transforms</em> again operate on individual
+stream items.</li>
+<li>Some number of <em>writers</em> send the final output somewhere.</li>
+</ul>
+<div class="section" id="configuration">
+<h3>3.3.1. Configuration<a class="headerlink" href="#configuration" title="Permalink to this headline">¶</a></h3>
+<p>The <strong class="command">streamcorpus_pipeline</strong> tool expects configuration in
+a YAML file.  The configuration resulting from this can be passed
+through <a class="reference internal" href="#streamcorpus_pipeline._pipeline.PipelineFactory" title="streamcorpus_pipeline._pipeline.PipelineFactory"><code class="xref py py-class docutils literal"><span class="pre">PipelineFactory</span></code></a> to create <a class="reference internal" href="#streamcorpus_pipeline._pipeline.Pipeline" title="streamcorpus_pipeline._pipeline.Pipeline"><code class="xref py py-class docutils literal"><span class="pre">Pipeline</span></code></a> objects.
+A typical coniguration looks like:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">streamcorpus_pipeline</span><span class="p-Indicator">:</span>
+  <span class="c1"># Lists of stages</span>
+  <span class="l-Scalar-Plain">reader</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">from_local_chunks</span>
+  <span class="l-Scalar-Plain">incremental_transforms</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">clean_html</span><span class="p-Indicator">,</span> <span class="nv">language</span><span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">batch_transforms</span><span class="p-Indicator">:</span> <span class="p-Indicator">[]</span>
+  <span class="l-Scalar-Plain">post_batch_incremental_transforms</span><span class="p-Indicator">:</span> <span class="p-Indicator">[]</span>
+  <span class="c1"># to_local_chunks must be the last writer if it is used</span>
+  <span class="l-Scalar-Plain">writers</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">to_local_chunks</span><span class="p-Indicator">]</span>
+
+  <span class="c1"># Configuration for specific stages</span>
+  <span class="l-Scalar-Plain">clean_html</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">include_language_codes</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">en</span><span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal"><span class="pre">streamcorpus_pipeline</span></code> block can additionally be configured
+with:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">root_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/home/user/diffeo</span>
+</pre></div>
+</div>
+<p>Any configuration variable whose name ends in &#8220;path&#8221; whose value is
+not an absolute path is considered relative to this directory.  If
+omitted, use the current directory.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">tmp_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">directory</span>
+</pre></div>
+</div>
+<p>Intermediate files are stored in a subdirectory of <code class="file docutils literal"><span class="pre">directory</span></code>.
+The pipeline execution will make an effort to clean this up.  If
+omitted, defaults to <code class="file docutils literal"><span class="pre">/tmp</span></code>.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">third_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">directory</span>
+</pre></div>
+</div>
+<p>External packages such as NLP taggers are stored in subdirectories
+of <code class="file docutils literal"><span class="pre">directory</span></code>; these are typically individually configured
+with <cite>path_in_third</cite> options relative to this directory.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">rate_log_interval</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">500</span>
+</pre></div>
+</div>
+<p>When this many items have been processed, log an INFO-level log
+message giving the current progress.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">input_item_limit</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">500</span>
+</pre></div>
+</div>
+<p>Stop processing after reading this many stream items.  (Default:
+process the entire stream)</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">cleanup_tmp_files</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</pre></div>
+</div>
+<p>After execution finishes, delete the per-execution subdirectory of
+<code class="docutils literal"><span class="pre">tmp_dir_path</span></code>.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">assert_single_source</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+<p>Normally a set of stream items has a consistent
+<a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.source" title="streamcorpus.StreamItem.source"><code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.StreamItem.source</span></code></a> value, and the pipeline
+framework will stop if it sees different values here.  Set this to
+<code class="docutils literal"><span class="pre">false</span></code> to disable this check.  (Default: do assert a single source
+value)</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">output_chunk_max_count</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">500</span>
+</pre></div>
+</div>
+<p>After this many items have been written, close and re-open the output.
+(Default: 500 items)</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">output_max_clean_visible_bytes</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1000000</span>
+</pre></div>
+</div>
+<p>After this much <code class="xref py py-attr docutils literal"><span class="pre">streamcorpus.StreamItem.clean_visible</span></code> content
+has been written, close and re-open the output.  (Default: write
+entire output in one batch)</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">external_stages_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">stages.py</span>
+</pre></div>
+</div>
+<p>The file <code class="file docutils literal"><span class="pre">stages.py</span></code> is a Python module that declares a
+top-level dictionary named <cite>Stages</cite>, a map from stage name to
+implementing class.  Stages defined in this file can be used in any of
+the appropriate stage lists.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">external_stages_modules</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="nv">example.stages</span> <span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>The Python module <code class="xref py py-mod docutils literal"><span class="pre">example.stages</span></code> declares a top-level
+dictionary named <cite>Stages</cite>, a map from stage name to implementing
+class.  The named modules must be on <a class="reference external" href="http://docs.python.org/library/sys.html#sys.path" title="(in Python v2.7)"><code class="xref py py-data docutils literal"><span class="pre">sys.path</span></code></a> so that the
+Python interpreter can find it.  Stages defined in these modules can
+be used in any of the appropriate stage lists.</p>
+</div>
+<div class="section" id="api">
+<h3>3.3.2. API<a class="headerlink" href="#api" title="Permalink to this headline">¶</a></h3>
+<p>The standard execution path is to pass the
+<a class="reference internal" href="#module-streamcorpus_pipeline" title="streamcorpus_pipeline"><code class="xref py py-mod docutils literal"><span class="pre">streamcorpus_pipeline</span></code></a> module to
+<a class="reference internal" href="yakonfig.html#yakonfig.parse_args" title="yakonfig.parse_args"><code class="xref py py-func docutils literal"><span class="pre">yakonfig.parse_args()</span></code></a>, then use <a class="reference internal" href="#streamcorpus_pipeline._pipeline.PipelineFactory" title="streamcorpus_pipeline._pipeline.PipelineFactory"><code class="xref py py-class docutils literal"><span class="pre">PipelineFactory</span></code></a> to
+create <a class="reference internal" href="#streamcorpus_pipeline._pipeline.Pipeline" title="streamcorpus_pipeline._pipeline.Pipeline"><code class="xref py py-class docutils literal"><span class="pre">Pipeline</span></code></a> objects from the resulting configuration.</p>
+<div class="admonition-todo admonition" id="index-0">
+<p class="first admonition-title">Todo</p>
+<p class="last">Make the top-level configuration point
+<a class="reference internal" href="#streamcorpus_pipeline._pipeline.PipelineFactory" title="streamcorpus_pipeline._pipeline.PipelineFactory"><code class="xref py py-class docutils literal"><span class="pre">PipelineFactory</span></code></a>, not the
+<a class="reference internal" href="#module-streamcorpus_pipeline" title="streamcorpus_pipeline"><code class="xref py py-mod docutils literal"><span class="pre">streamcorpus_pipeline</span></code></a> module</p>
+</div>
+<dl class="class">
+<dt id="streamcorpus_pipeline._pipeline.PipelineFactory">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._pipeline.</code><code class="descname">PipelineFactory</code><span class="sig-paren">(</span><em>registry</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#PipelineFactory"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.PipelineFactory" title="Permalink to this definition">¶</a></dt>
+<dd><p>Factory to create <a class="reference internal" href="#streamcorpus_pipeline._pipeline.Pipeline" title="streamcorpus_pipeline._pipeline.Pipeline"><code class="xref py py-class docutils literal"><span class="pre">Pipeline</span></code></a> objects from configuration.</p>
+<p>Call this to get a <a class="reference internal" href="#streamcorpus_pipeline._pipeline.Pipeline" title="streamcorpus_pipeline._pipeline.Pipeline"><code class="xref py py-class docutils literal"><span class="pre">Pipeline</span></code></a> object.  Typical programmatic
+use:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+<span class="n">args</span> <span class="o">=</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">parse_args</span><span class="p">([</span><span class="n">yakonfig</span><span class="p">,</span> <span class="n">streamcorpus_pipeline</span><span class="p">])</span>
+<span class="n">factory</span> <span class="o">=</span> <span class="n">PipelineFactory</span><span class="p">(</span><span class="n">StageRegistry</span><span class="p">())</span>
+<span class="n">pipeline</span> <span class="o">=</span> <span class="n">factory</span><span class="p">(</span><span class="n">yakonfig</span><span class="o">.</span><span class="n">get_global_config</span><span class="p">(</span><span class="s">&#39;streamcorpus_pipeline&#39;</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>This factory class will instantiate all of the stages named in the
+<cite>streamcorpus_pipeline</cite> configuration.  These stages will be created
+with their corresponding configuration, except that they have two
+keys added, <code class="docutils literal"><span class="pre">tmp_dir_path</span></code> and <code class="docutils literal"><span class="pre">third_dir_path</span></code>, from the
+top-level configuration.</p>
+<dl class="method">
+<dt id="streamcorpus_pipeline._pipeline.PipelineFactory.__init__">
+<code class="descname">__init__</code><span class="sig-paren">(</span><em>registry</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#PipelineFactory.__init__"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.PipelineFactory.__init__" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create a pipeline factory.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first last simple">
+<li><strong>config</strong> (<a class="reference external" href="http://docs.python.org/library/stdtypes.html#dict" title="(in Python v2.7)"><em>dict</em></a>) &#8211; top-level &#8220;streamcorpus_pipeline&#8221; configuration</li>
+<li><strong>registry</strong> (<a class="reference internal" href="#streamcorpus_pipeline.stages.StageRegistry" title="streamcorpus_pipeline.stages.StageRegistry"><code class="xref py py-class docutils literal"><span class="pre">StageRegistry</span></code></a>) &#8211; registry of stages</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline._pipeline.PipelineFactory.__call__">
+<code class="descname">__call__</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#PipelineFactory.__call__"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.PipelineFactory.__call__" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create a <a class="reference internal" href="#streamcorpus_pipeline._pipeline.Pipeline" title="streamcorpus_pipeline._pipeline.Pipeline"><code class="xref py py-class docutils literal"><span class="pre">Pipeline</span></code></a>.</p>
+<p>Pass in the configuration under the <code class="docutils literal"><span class="pre">streamcorpus_pipeline</span></code>
+block, not the top-level configuration that contains it.</p>
+<p>If <a class="reference internal" href="#streamcorpus_pipeline._pipeline.PipelineFactory.tmp_dir_suffix" title="streamcorpus_pipeline._pipeline.PipelineFactory.tmp_dir_suffix"><code class="xref py py-attr docutils literal"><span class="pre">tmp_dir_suffix</span></code></a> is <code class="xref py py-const docutils literal"><span class="pre">None</span></code>, then locks the
+factory and creates stages with a temporary (UUID) value.  If
+the configuration has <cite>cleanup_tmp_files</cite> set to <code class="xref py py-const docutils literal"><span class="pre">True</span></code>
+(the default) then executing the resulting pipeline will clean
+up the directory afterwards.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><strong>config</strong> (<a class="reference external" href="http://docs.python.org/library/stdtypes.html#dict" title="(in Python v2.7)"><em>dict</em></a>) &#8211; <cite>streamcorpus_pipeline</cite> configuration</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body">new pipeline instance</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus_pipeline._pipeline.PipelineFactory.registry">
+<code class="descname">registry</code><a class="headerlink" href="#streamcorpus_pipeline._pipeline.PipelineFactory.registry" title="Permalink to this definition">¶</a></dt>
+<dd><p>The <a class="reference internal" href="#streamcorpus_pipeline.stages.StageRegistry" title="streamcorpus_pipeline.stages.StageRegistry"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus_pipeline.stages.StageRegistry</span></code></a> used
+to find pipeline stages.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus_pipeline._pipeline.PipelineFactory.tmp_dir_suffix">
+<code class="descname">tmp_dir_suffix</code><a class="headerlink" href="#streamcorpus_pipeline._pipeline.PipelineFactory.tmp_dir_suffix" title="Permalink to this definition">¶</a></dt>
+<dd><p>A string value that is appended to <code class="docutils literal"><span class="pre">tmp_dir_path</span></code> when
+creating pipeline stages.  If <code class="xref py py-const docutils literal"><span class="pre">None</span></code>, use the top-level
+<code class="docutils literal"><span class="pre">tmp_dir_path</span></code> configuration directly.</p>
+</dd></dl>
+
+<dl class="attribute">
+<dt id="streamcorpus_pipeline._pipeline.PipelineFactory.lock">
+<code class="descname">lock</code><a class="headerlink" href="#streamcorpus_pipeline._pipeline.PipelineFactory.lock" title="Permalink to this definition">¶</a></dt>
+<dd><p>A <code class="xref py py-class docutils literal"><span class="pre">threading.Lock</span></code> to protect against concurrent
+modification of <cite>tmp_dir_suffix</cite>.</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline._pipeline.PipelineFactory.create">
+<code class="descname">create</code><span class="sig-paren">(</span><em>stage</em>, <em>scp_config</em>, <em>config=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#PipelineFactory.create"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.PipelineFactory.create" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create a pipeline stage.</p>
+<p>Instantiates <cite>stage</cite> with <cite>config</cite>.  This essentially
+translates to <code class="docutils literal"><span class="pre">stage(config)</span></code>, except that two keys from
+<cite>scp_config</cite> are injected into the configuration:
+<code class="docutils literal"><span class="pre">tmp_dir_path</span></code> is an execution-specific directory from
+combining the top-level <code class="docutils literal"><span class="pre">tmp_dir_path</span></code> configuration with
+<a class="reference internal" href="#streamcorpus_pipeline._pipeline.PipelineFactory.tmp_dir_suffix" title="streamcorpus_pipeline._pipeline.PipelineFactory.tmp_dir_suffix"><code class="xref py py-attr docutils literal"><span class="pre">tmp_dir_suffix</span></code></a>; and <code class="docutils literal"><span class="pre">third_dir_path</span></code> is the same
+path from the top-level configuration.  <cite>stage</cite> may be either
+a callable returning the stage (e.g. its class), or its name
+in the configuration.</p>
+<p><cite>scp_config</cite> is the configuration for the pipeline as a
+whole, and is required.  <cite>config</cite> is the configuration for
+the stage; if it is <code class="xref py py-const docutils literal"><span class="pre">None</span></code> then it is extracted
+from <cite>scp_config</cite>.</p>
+<p>If you already have a fully formed configuration block
+and want to create a stage, you can call</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">factory</span><span class="o">.</span><span class="n">registry</span><span class="p">[</span><span class="n">stage</span><span class="p">](</span><span class="n">stage_config</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>In most cases if you have a stage class object and want to
+instantiate it with its defaults you can call</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">stage</span> <span class="o">=</span> <span class="n">stage_cls</span><span class="p">(</span><span class="n">stage_cls</span><span class="o">.</span><span class="n">default_config</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="admonition note">
+<p class="first admonition-title">Note</p>
+<p class="last">This mirrors
+<code class="xref py py-meth docutils literal"><span class="pre">yakonfig.factory.AutoFactory.create()</span></code>, with
+some thought that this factory class might migrate
+to using that as a base in the future.</p>
+</div>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first last simple">
+<li><strong>stage</strong> &#8211; pipeline stage class, or its name in the registry</li>
+<li><strong>scp_config</strong> (<a class="reference external" href="http://docs.python.org/library/stdtypes.html#dict" title="(in Python v2.7)"><em>dict</em></a>) &#8211; configuration block for the pipeline</li>
+<li><strong>config</strong> (<a class="reference external" href="http://docs.python.org/library/stdtypes.html#dict" title="(in Python v2.7)"><em>dict</em></a>) &#8211; configuration block for the stage, or
+<code class="xref py py-const docutils literal"><span class="pre">None</span></code> to get it from <cite>scp_config</cite></li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._pipeline.Pipeline">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._pipeline.</code><code class="descname">Pipeline</code><span class="sig-paren">(</span><em>rate_log_interval</em>, <em>input_item_limit</em>, <em>cleanup_tmp_files</em>, <em>tmp_dir_path</em>, <em>assert_single_source</em>, <em>output_chunk_max_count</em>, <em>output_max_clean_visible_bytes</em>, <em>reader</em>, <em>incremental_transforms</em>, <em>batch_transforms</em>, <em>post_batch_incremental_transforms</em>, <em>writers</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#Pipeline"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.Pipeline" title="Permalink to this definition">¶</a></dt>
+<dd><p>Pipeline for extracting data into StreamItem instances.</p>
+<p>The pipeline has five sets of stages.  The <em>reader</em> stage reads
+from some input source and produces a series of StreamItem objects
+out.  <em>Incremental transforms</em> take single StreamItem objects in
+and produce single StreamItem objects out.  <em>Batch transforms</em> run
+on the entire set of StreamItem objects together.  There is a
+further set of <em>post-batch incremental transforms</em> which again run
+on individual StreamItem objects.  Finally, any number of <em>writers</em>
+send output somewhere, usually a streamcorpus.Chunk file.</p>
+<dl class="method">
+<dt id="streamcorpus_pipeline._pipeline.Pipeline.__init__">
+<code class="descname">__init__</code><span class="sig-paren">(</span><em>rate_log_interval</em>, <em>input_item_limit</em>, <em>cleanup_tmp_files</em>, <em>tmp_dir_path</em>, <em>assert_single_source</em>, <em>output_chunk_max_count</em>, <em>output_max_clean_visible_bytes</em>, <em>reader</em>, <em>incremental_transforms</em>, <em>batch_transforms</em>, <em>post_batch_incremental_transforms</em>, <em>writers</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#Pipeline.__init__"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.Pipeline.__init__" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create a new pipeline object.</p>
+<div class="admonition-todo admonition" id="index-1">
+<p class="first admonition-title">Todo</p>
+<p class="last">make this callable with just the lists of stages
+and give sane (language-level) defaults for the rest</p>
+</div>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first last simple">
+<li><strong>rate_log_interval</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; print progress every time this
+many input items have been processed</li>
+<li><strong>input_item_limit</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; stop after this many items</li>
+<li><strong>cleanup_tmp_files</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#bool" title="(in Python v2.7)"><em>bool</em></a>) &#8211; delete <cite>tmp_dir_path</cite> after
+execution if true</li>
+<li><strong>tmp_dir_path</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; path for intermediate files</li>
+<li><strong>assert_single_source</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#bool" title="(in Python v2.7)"><em>bool</em></a>) &#8211; require all items to have
+the same source value if true</li>
+<li><strong>output_chunk_max_count</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; restart output after
+writing this many items</li>
+<li><strong>output_max_clean_visible_bytes</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; restart output after
+writing this much content</li>
+<li><strong>reader</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#callable" title="(in Python v2.7)"><em>callable</em></a>) &#8211; reader stage object</li>
+<li><strong>incremental_transforms</strong> (<em>list of callable</em>) &#8211; single-item transformation stages</li>
+<li><strong>batch_transforms</strong> (<em>list of callable</em>) &#8211; chunk-file transformation stages</li>
+<li><strong>post_batch_incremental_transforms</strong> (<em>list of callable</em>) &#8211; single-item transformation
+stages</li>
+<li><strong>writers</strong> (<em>list of callable</em>) &#8211; output stages</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline._pipeline.Pipeline.run">
+<code class="descname">run</code><span class="sig-paren">(</span><em>i_str</em>, <em>start_count=0</em>, <em>start_chunk_time=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#Pipeline.run"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.Pipeline.run" title="Permalink to this definition">¶</a></dt>
+<dd><p>Run the pipeline.</p>
+<p>This runs all of the steps described in the pipeline constructor,
+reading from some input and writing to some output.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first last simple">
+<li><strong>i_str</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; name of the input file, or other reader-specific
+description of where to get input</li>
+<li><strong>start_count</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; index of the first stream item</li>
+<li><strong>start_chunk_time</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; timestamp for the first stream item</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline._pipeline.Pipeline._process_task">
+<code class="descname">_process_task</code><span class="sig-paren">(</span><em>work_unit</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#Pipeline._process_task"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pipeline.Pipeline._process_task" title="Permalink to this definition">¶</a></dt>
+<dd><p>Process a <a class="reference internal" href="rejester.html#rejester.WorkUnit" title="rejester.WorkUnit"><code class="xref py py-class docutils literal"><span class="pre">rejester.WorkUnit</span></code></a>.</p>
+<p>The work unit&#8217;s key is taken as the input file name.  The
+data should have <code class="docutils literal"><span class="pre">start_count</span></code> and <code class="docutils literal"><span class="pre">start_chunk_time</span></code>
+values, which are passed on to <a class="reference internal" href="#streamcorpus_pipeline._pipeline.Pipeline.run" title="streamcorpus_pipeline._pipeline.Pipeline.run"><code class="xref py py-meth docutils literal"><span class="pre">run()</span></code></a>.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><strong>work_unit</strong> (<a class="reference internal" href="rejester.html#rejester.WorkUnit" title="rejester.WorkUnit"><code class="xref py py-class docutils literal"><span class="pre">rejester.WorkUnit</span></code></a>) &#8211; work unit to process</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body">number of stream items processed</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt>
+<code class="descname">run</code><span class="sig-paren">(</span><em>i_str</em>, <em>start_count=0</em>, <em>start_chunk_time=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pipeline.html#Pipeline.run"><span class="viewcode-link">[source]</span></a></dt>
+<dd><p>Run the pipeline.</p>
+<p>This runs all of the steps described in the pipeline constructor,
+reading from some input and writing to some output.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first last simple">
+<li><strong>i_str</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; name of the input file, or other reader-specific
+description of where to get input</li>
+<li><strong>start_count</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; index of the first stream item</li>
+<li><strong>start_chunk_time</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#int" title="(in Python v2.7)"><em>int</em></a>) &#8211; timestamp for the first stream item</li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+</dd></dl>
+
+</div>
+</div>
+<div class="section" id="module-streamcorpus_pipeline.stages">
+<span id="pipeline-stages"></span><h2>3.4. Pipeline stages<a class="headerlink" href="#module-streamcorpus_pipeline.stages" title="Permalink to this headline">¶</a></h2>
+<p>Registry of stages for streamcorpus_pipeline.</p>
+<p>Stages are implemented as callable Python objects.  In almost all
+cases the name of the stage in the configuration file is the same as
+its class name.</p>
+<div class="section" id="readers">
+<h3>3.4.1. Readers<a class="headerlink" href="#readers" title="Permalink to this headline">¶</a></h3>
+<dl class="class">
+<dt id="streamcorpus_pipeline._convert_kba_json.convert_kba_json">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._convert_kba_json.</code><code class="descname">convert_kba_json</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_convert_kba_json.html#convert_kba_json"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._convert_kba_json.convert_kba_json" title="Permalink to this definition">¶</a></dt>
+<dd><p>Returns a streamcorpus_pipeline &#8220;reader&#8221; that generates a single
+streamcorpus.Chunk file containing the John Smith corpus.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._local_storage.from_local_chunks">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._local_storage.</code><code class="descname">from_local_chunks</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_local_storage.html#from_local_chunks"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._local_storage.from_local_chunks" title="Permalink to this definition">¶</a></dt>
+<dd><p>may use config[&#8216;max_retries&#8217;] (default 1)
+may use config[&#8216;max_backoff&#8217;] (seconds, default 300)
+may use config[&#8216;streamcorpus_version&#8217;] (default &#8216;v0_3_0&#8217;)</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._local_storage.from_local_files">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._local_storage.</code><code class="descname">from_local_files</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_local_storage.html#from_local_files"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._local_storage.from_local_files" title="Permalink to this definition">¶</a></dt>
+<dd><p>Read plain text or other raw content from local files.</p>
+<p>Each input filename is taken as an actual filename.  This produces
+one stream item per file.  This can be configured as follows:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">abs_url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">null</span>
+<span class="l-Scalar-Plain">url_prefix</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">file://</span>
+<span class="l-Scalar-Plain">absolute_filename</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+<span class="l-Scalar-Plain">epoch_ticks</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">file</span>
+<span class="l-Scalar-Plain">encoding</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">null</span>
+</pre></div>
+</div>
+<p>If <cite>abs_url</cite> is provided in configuration, this value is used
+as-is as the corresponding field in the stream item.  Otherwise,
+the path is converted to an absolute path if <cite>absolute_filename</cite>
+is true, and then <cite>url_prefix</cite> is prepended to it.</p>
+<p><cite>epoch_ticks</cite> indicates the corresponding time stamp in the stream
+item.  This may be an integer for specific seconds since the Unix
+epoch, the string <code class="docutils literal"><span class="pre">file</span></code> indicating to use the last-modified
+time of the file, or the string <code class="docutils literal"><span class="pre">now</span></code> for the current time.</p>
+<p><code class="docutils literal"><span class="pre">encoding</span></code> should be set if you know the encoding of the files
+you&#8217;re loading. e.g., <code class="docutils literal"><span class="pre">utf-8</span></code>.</p>
+<p>The values shown above are the defaults.  If reading in files
+in a directory structure matching a URL hierarchy, an alternate
+configuration could be</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">url_prefix</span><span class="p-Indicator">:</span> <span class="s">&quot;http://home.example.com/&quot;</span>
+<span class="l-Scalar-Plain">absolute_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._kvlayer.from_kvlayer">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._kvlayer.</code><code class="descname">from_kvlayer</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_kvlayer.html#from_kvlayer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._kvlayer.from_kvlayer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Read documents from a <a class="reference internal" href="kvlayer.html#module-kvlayer" title="kvlayer"><code class="xref py py-mod docutils literal"><span class="pre">kvlayer</span></code></a> supported database.</p>
+<p><a class="reference internal" href="kvlayer.html#module-kvlayer" title="kvlayer"><code class="xref py py-mod docutils literal"><span class="pre">kvlayer</span></code></a> must be included in the top-level configuration.
+Typically this reads stream items previously written by
+<a class="reference internal" href="#streamcorpus_pipeline._kvlayer.to_kvlayer" title="streamcorpus_pipeline._kvlayer.to_kvlayer"><code class="xref py py-class docutils literal"><span class="pre">to_kvlayer</span></code></a>.</p>
+<p>The input string is a sequence of stream IDs; see <a class="reference internal" href="#streamcorpus_pipeline._kvlayer.from_kvlayer.__call__" title="streamcorpus_pipeline._kvlayer.from_kvlayer.__call__"><code class="xref py py-meth docutils literal"><span class="pre">__call__()</span></code></a>
+for details.  If no values are specified, scans the entire
+<code class="xref py py-data docutils literal"><span class="pre">STREAM_ITEMS_TABLE</span></code>
+table.</p>
+<dl class="method">
+<dt id="streamcorpus_pipeline._kvlayer.from_kvlayer.__call__">
+<code class="descname">__call__</code><span class="sig-paren">(</span><em>i_str</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_kvlayer.html#from_kvlayer.__call__"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._kvlayer.from_kvlayer.__call__" title="Permalink to this definition">¶</a></dt>
+<dd><p>Actually scan the table, yielding stream items.</p>
+<p><cite>i_str</cite> consists of a sequence of 20-byte encoded stream IDs.
+These are the 16 bytes of the document ID, plus the 4-byte
+big-endian stream time.  <code class="xref py py-func docutils literal"><span class="pre">serialize_si()</span></code> can produce
+these.  <cite>i_str</cite> can then consist of a single encoded stream
+ID; an encoded stream ID, a literal <code class="docutils literal"><span class="pre">&lt;</span></code>, and a second
+encoded stream ID to specify a range of documents; or a list
+of either of the preceding separated by literal <code class="docutils literal"><span class="pre">;</span></code>.</p>
+<div class="admonition-todo admonition" id="index-2">
+<p class="first admonition-title">Todo</p>
+<p class="last">make this support keyword index strings</p>
+</div>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._s3_storage.from_s3_chunks">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._s3_storage.</code><code class="descname">from_s3_chunks</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_s3_storage.html#from_s3_chunks"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._s3_storage.from_s3_chunks" title="Permalink to this definition">¶</a></dt>
+<dd><p>Reads data from Amazon S3 one key at a time. The type of data read
+can be specified with the <code class="docutils literal"><span class="pre">input_format</span></code> config option. The
+following values are legal: <code class="docutils literal"><span class="pre">streamitem</span></code>, <code class="docutils literal"><span class="pre">featurecollection</span></code>
+or <code class="docutils literal"><span class="pre">spinn3r</span></code>.</p>
+<p>When the input format is <code class="docutils literal"><span class="pre">streamitem</span></code> or <code class="docutils literal"><span class="pre">spinn3r</span></code>, then this
+reader produces a generator of <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamItem</span></code></a>
+instances.</p>
+<p>When the input format is <code class="docutils literal"><span class="pre">featurecollection</span></code>, then this reader
+produces a generator of <code class="docutils literal"><span class="pre">dossier.fc.FeatureCollection</span></code> instances.</p>
+<p><code class="docutils literal"><span class="pre">bucket</span></code> is the s3 bucket to use if input paths are not full
+s3://{bucket}{path} URIs. <code class="docutils literal"><span class="pre">aws_access_key_id_path</span></code> and
+<code class="docutils literal"><span class="pre">aws_secret_access_key_path</span></code> should point to files containing
+your s3 credentials. Alternatley credentials can be in environment
+variables <code class="docutils literal"><span class="pre">`AWS_ACCESS_KEY_ID</span></code> and <code class="docutils literal"><span class="pre">AWS_SECRET_ACCESS_KEY</span></code></p>
+<p>The rest of the configuration options are optional and are described
+in the following example:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">from_s3_chunks</span><span class="p-Indicator">:</span>
+  <span class="c1"># How to connect to S3</span>
+  <span class="c1"># bucket can also come from input path if full uri s3://{bucket}{path}</span>
+  <span class="l-Scalar-Plain">bucket</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">aws-publicdatasets</span>
+  <span class="c1"># can also come from environment variable AWS_ACCESS_KEY_ID</span>
+  <span class="l-Scalar-Plain">aws_access_key_id_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">keys/aws_access_key_id</span>
+  <span class="c1"># can also come from environment variable AWS_SECRET_ACCESS_KEY</span>
+  <span class="l-Scalar-Plain">aws_secret_access_key_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">keys/aws_secret_access_key</span>
+
+  <span class="c1"># Optional parameters.</span>
+  
+  <span class="c1"># The number of times to try reading from s3. A value of</span>
+  <span class="c1"># `1` means the download is tried exactly once.</span>
+  <span class="c1"># The default value is `10`.</span>
+  <span class="l-Scalar-Plain">tries</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+
+  <span class="c1"># This is prepended to every key given. Namely, all s3 URLs</span>
+  <span class="c1"># are formed by `s3://{bucket}/{s3_path_prefix}/{input-key-name}`.</span>
+  <span class="c1"># By default, it is empty.</span>
+  <span class="l-Scalar-Plain">s3_path_prefix</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">some/s3/prefix</span>
+
+  <span class="c1"># A path to a private GPG decryption key file.</span>
+  <span class="l-Scalar-Plain">gpg_decryption_key_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">keys/gpg-key</span>
+
+  <span class="c1"># The type of data to read from s3. Valid values are</span>
+  <span class="c1"># &quot;StreamItem&quot;, &quot;spinn3r&quot; or &quot;FeatureCollection&quot;.</span>
+  <span class="c1"># The default is &quot;StreamItem&quot;.</span>
+  <span class="l-Scalar-Plain">input_format</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">StreamItem</span>
+
+  <span class="c1"># When the input format is &quot;StreamItem&quot;, this indicates the</span>
+  <span class="c1"># Thrift version to use. Defaults to &quot;v0_3_0&quot;.</span>
+  <span class="l-Scalar-Plain">streamcorpus_version</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">v0_3_0</span>
+
+  <span class="c1"># When set, an md5 is extracted from the s3 key and is used</span>
+  <span class="c1"># to verify the decrypted and decompressed content downloaded.</span>
+  <span class="c1"># This is disabled by default.</span>
+  <span class="l-Scalar-Plain">compare_md5_in_file_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+
+  <span class="c1"># A temporary directory where intermediate files may reside.</span>
+  <span class="c1"># Uses your system&#39;s default tmp directory (usually `/tmp`)</span>
+  <span class="c1"># by default.</span>
+  <span class="l-Scalar-Plain">tmp_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/tmp</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._john_smith.john_smith">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._john_smith.</code><code class="descname">john_smith</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_john_smith.html#john_smith"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._john_smith.john_smith" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._yaml_files_list.yaml_files_list">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._yaml_files_list.</code><code class="descname">yaml_files_list</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_yaml_files_list.html#yaml_files_list"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._yaml_files_list.yaml_files_list" title="Permalink to this definition">¶</a></dt>
+<dd><p>Read and tag flat files as described in a YAML file.</p>
+<p>When this reader stage is in use, the input file to the pipeline
+is a YAML file.  That YAML file points at several other files and
+directories, and the contents of those files are emitted as
+stream items.</p>
+<p>The YAML file has the following format:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">root_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/data/directory</span>
+<span class="l-Scalar-Plain">annotator_id</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-name</span>
+<span class="l-Scalar-Plain">source</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">weblog</span>
+<span class="l-Scalar-Plain">entities</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">target_id</span><span class="p-Indicator">:</span> <span class="s">&quot;https://kb.diffeo.com/sample&quot;</span>
+    <span class="l-Scalar-Plain">doc_path</span><span class="p-Indicator">:</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">sample</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">doc_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">copies/sample</span>
+        <span class="l-Scalar-Plain">abs_url</span><span class="p-Indicator">:</span> <span class="s">&quot;http://source.example.com/sample&quot;</span>
+    <span class="l-Scalar-Plain">external_profiles</span><span class="p-Indicator">:</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">doc_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">wikipedia/Sample</span>
+        <span class="l-Scalar-Plain">abs_url</span><span class="p-Indicator">:</span> <span class="s">&quot;http://en.wikipedia.org/wiki/Sample&quot;</span>
+    <span class="l-Scalar-Plain">slots</span><span class="p-Indicator">:</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">canonical_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">Sample</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">example</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">title</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">Sample</span><span class="p-Indicator">,</span> <span class="s">&quot;dot</span><span class="nv"> </span><span class="s">com&quot;</span><span class="p-Indicator">]</span>
+      <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">knowledge_bases</span><span class="p-Indicator">:</span>
+        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">value</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">wikipedia</span>
+        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">profile_id</span><span class="p-Indicator">:</span> <span class="s">&quot;http://en.wikipedia.org/wiki/Sample&quot;</span>
+        <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">annotator_id</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">my-name</span>
+</pre></div>
+</div>
+<p>At the top level, the file contains:</p>
+<dl class="docutils">
+<dt><code class="docutils literal"><span class="pre">root_path</span></code> (default: current directory)</dt>
+<dd>Root path to the data to read.</dd>
+<dt><code class="docutils literal"><span class="pre">annotator_id</span></code> (required)</dt>
+<dd>Annotator ID string on produced document ratings.</dd>
+<dt><code class="docutils literal"><span class="pre">source</span></code> (default: <code class="docutils literal"><span class="pre">unknown</span></code>)</dt>
+<dd>Source type for produced stream items.</dd>
+<dt><code class="docutils literal"><span class="pre">entities</span></code> (required)</dt>
+<dd>List of entity document sets to read.</dd>
+</dl>
+<p><code class="docutils literal"><span class="pre">entities</span></code> is a list of dictionaries.  Each entity dictionary has
+the following items:</p>
+<dl class="docutils">
+<dt><code class="docutils literal"><span class="pre">target_id</span></code> (required)</dt>
+<dd>Target entity URL for produced ratings</dd>
+<dt><code class="docutils literal"><span class="pre">doc_path</span></code> (required)</dt>
+<dd>List of source files or directories.  These may be strings or
+dictionaries.  If dictionaries, <code class="docutils literal"><span class="pre">doc_path</span></code> is the filesystem
+path and <code class="docutils literal"><span class="pre">abs_url</span></code> is the corresponding URL; if strings, the
+strings are filesystem paths and the URL is generated.
+Filesystem paths are interpreted relative to the <code class="docutils literal"><span class="pre">root_path</span></code>.</dd>
+<dt><code class="docutils literal"><span class="pre">external_profiles</span></code> (optional)</dt>
+<dd>List of additional source files or directories that are external
+profiles, such as Wikipedia articles.  These are processed in
+the same way as items in <code class="docutils literal"><span class="pre">doc_path</span></code> but must be in dictionary
+form, where the <code class="docutils literal"><span class="pre">abs_url</span></code> field identifies the external
+knowledge base article.</dd>
+<dt><code class="docutils literal"><span class="pre">slots</span></code> (required)</dt>
+<dd>Additional knowledge base metadata about the entity.</dd>
+</dl>
+<p>For each entity, the reader finds all documents in the named
+directories and creates a <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamItem</span></code></a> for
+each.  The <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.body" title="streamcorpus.StreamItem.body"><code class="xref py py-attr docutils literal"><span class="pre">body</span></code></a> has its
+<a class="reference internal" href="streamcorpus.html#streamcorpus.ContentItem.raw" title="streamcorpus.ContentItem.raw"><code class="xref py py-attr docutils literal"><span class="pre">raw</span></code></a> data set to the contents of
+the file.  The stream items are also tagged with a
+<a class="reference internal" href="streamcorpus.html#streamcorpus.Rating" title="streamcorpus.Rating"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.Rating</span></code></a> where the annotator comes from the
+file metadata and the target comes from the entity <code class="docutils literal"><span class="pre">target_id</span></code>.
+The <a class="reference internal" href="streamcorpus.html#streamcorpus.Rating.mentions" title="streamcorpus.Rating.mentions"><code class="xref py py-attr docutils literal"><span class="pre">mentions</span></code></a> on the rating are set
+to the union of all of the slot values for all slots.</p>
+<p>The <code class="docutils literal"><span class="pre">slots</span></code> field is a list of values.  Each value is interpreted
+as follows:</p>
+<ol class="arabic simple">
+<li>If it is a dictionary, then each key in the dictionary is
+interpreted as a slot name, and the corresponding value provides
+the slot values.  Otherwise, the value is taken as a value for
+the slot <code class="docutils literal"><span class="pre">NAME</span></code>.</li>
+<li>If the slot value is a list, then each item in the list is
+independently interpreted as a value for this slot.</li>
+<li>If the slot value is a dictionary, then it may have keys
+<code class="docutils literal"><span class="pre">value</span></code> (required), <code class="docutils literal"><span class="pre">mention_id</span></code>, <code class="docutils literal"><span class="pre">profile_id</span></code>, and
+<code class="docutils literal"><span class="pre">annotator_id</span></code>, which are used to construct a composite slot
+value.  Otherwise, the slot value is used directly without
+additional metadata.</li>
+</ol>
+<p>The following YAML fragment provides several values for the
+<code class="docutils literal"><span class="pre">NAME</span></code> slot, which are ultimately combined:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">slots</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">one</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">NAME</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">two</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">NAME</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">three</span><span class="p-Indicator">,</span> <span class="nv">four</span><span class="p-Indicator">]</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">NAME</span><span class="p-Indicator">:</span>
+      <span class="l-Scalar-Plain">value</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">five</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._spinn3r_feed_storage.from_spinn3r_feed">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._spinn3r_feed_storage.</code><code class="descname">from_spinn3r_feed</code><span class="sig-paren">(</span><em>config={}</em>, <em>prefetched=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_spinn3r_feed_storage.html#from_spinn3r_feed"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._spinn3r_feed_storage.from_spinn3r_feed" title="Permalink to this definition">¶</a></dt>
+<dd><p>streamcorpus-pipeline reader for spinn3r.com feeds.</p>
+<p>Accepted configuration items include:</p>
+<dl class="docutils">
+<dt><code class="docutils literal"><span class="pre">use_prefetched</span></code></dt>
+<dd>If set to a boolean value, always/never use prefetched data
+(default: unset; use prefetched data if present)</dd>
+<dt><code class="docutils literal"><span class="pre">publisher_type</span></code></dt>
+<dd>If set, only return stream items whose publisher type in the
+spinn3r feed exactly matches this string</dd>
+</dl>
+<p>A dictionary from URL to prefetched data can be passed as a
+parameter to the stage constructor.  If <cite>use_prefetched</cite> is
+<code class="xref py py-const docutils literal"><span class="pre">True</span></code> then all input strings must be present in the
+prefetch dictionary, and this stage never makes an outgoing
+network connection.  If <cite>use_prefetched</cite> is <code class="xref py py-const docutils literal"><span class="pre">False</span></code> then
+the prefetch dictionary is ignored.  Otherwise if an input string
+is present in the prefetch dictionary, then the prefetched data is
+used, and if not, it is fetched from the network.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._serifxml.from_serifxml">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._serifxml.</code><code class="descname">from_serifxml</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_serifxml.html#from_serifxml"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._serifxml.from_serifxml" title="Permalink to this definition">¶</a></dt>
+<dd><p>Read a Serif XML intermediate file as the input to the pipeline.</p>
+<p>This is a specialized reader for unusual circumstances; you will
+still need to run <a class="reference internal" href="#streamcorpus_pipeline._serif.serif" title="streamcorpus_pipeline._serif.serif"><code class="xref py py-class docutils literal"><span class="pre">serif</span></code></a>
+with special settings to complete the tagging.  This expects to
+find serifxml flat files in a directory and creates a
+<a class="reference internal" href="streamcorpus.html#streamcorpus.Tagging" title="streamcorpus.Tagging"><code class="xref py py-class docutils literal"><span class="pre">Tagging</span></code></a> with
+<a class="reference internal" href="streamcorpus.html#streamcorpus.Tagging.raw_tagging" title="streamcorpus.Tagging.raw_tagging"><code class="xref py py-attr docutils literal"><span class="pre">raw_tagging</span></code></a> holding the serifxml
+string.  This <a class="reference internal" href="streamcorpus.html#streamcorpus.Tagging" title="streamcorpus.Tagging"><code class="xref py py-class docutils literal"><span class="pre">Tagging</span></code></a> is stored in
+<code class="xref py py-attr docutils literal"><span class="pre">taggings</span></code>.</p>
+<p>This also fills in <a class="reference internal" href="streamcorpus.html#streamcorpus.ContentItem.raw" title="streamcorpus.ContentItem.raw"><code class="xref py py-attr docutils literal"><span class="pre">raw</span></code></a> field.</p>
+<p>This has one configuration option, which can usually be left at
+its default value:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">streamcorpus_pipeline</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">from_serifxml</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">tagger_id</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">serif</span>
+</pre></div>
+</div>
+<p><cite>tagger_id</cite> is the tagger name in the generated
+<a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">StreamItem</span></code></a>.</p>
+<p>To obtain <code class="xref py py-attr docutils literal"><span class="pre">sentences</span></code>, one
+must run Serif in the special <cite>read_serifxml</cite> mode:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">streamcorpus_pipeline</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">third_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/third</span>
+  <span class="l-Scalar-Plain">tmp_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">tmp</span>
+  <span class="l-Scalar-Plain">reader</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">from_serifxml</span>
+  <span class="l-Scalar-Plain">incremental_transforms</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">language</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">guess_media_type</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">clean_html</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">clean_visible</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">title</span>
+  <span class="l-Scalar-Plain">batch_transforms</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">serif</span>
+  <span class="l-Scalar-Plain">language</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">force</span><span class="p-Indicator">:</span>
+      <span class="l-Scalar-Plain">name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">English</span>
+      <span class="l-Scalar-Plain">code</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">en</span>
+  <span class="l-Scalar-Plain">guess_media_type</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">fallback_media_type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">text/plain</span>
+  <span class="l-Scalar-Plain">serif</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">path_in_third</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">serif/serif-latest</span>
+    <span class="l-Scalar-Plain">serif_exe</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">bin/x86_64/Serif</span>
+    <span class="l-Scalar-Plain">par</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">streamcorpus_read_serifxml</span>
+    <span class="l-Scalar-Plain">par_additions</span><span class="p-Indicator">:</span>
+      <span class="l-Scalar-Plain">streamcorpus_read_serifxml</span><span class="p-Indicator">:</span>
+      <span class="p-Indicator">-</span> <span class="s">&quot;#</span><span class="nv"> </span><span class="s">example</span><span class="nv"> </span><span class="s">additional</span><span class="nv"> </span><span class="s">line&quot;</span>
+  <span class="l-Scalar-Plain">writer</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">to_local_chunks</span>
+  <span class="l-Scalar-Plain">to_local_chunks</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">output_type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">otherdir</span>
+    <span class="l-Scalar-Plain">output_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">test_output</span>
+    <span class="l-Scalar-Plain">output_name</span><span class="p-Indicator">:</span> <span class="s">&quot;%(input_fname)s&quot;</span>
+</pre></div>
+</div>
+</dd></dl>
+
+</div>
+<div class="section" id="incremental-transforms">
+<h3>3.4.2. Incremental transforms<a class="headerlink" href="#incremental-transforms" title="Permalink to this headline">¶</a></h3>
+<dl class="class">
+<dt id="streamcorpus_pipeline._clean_html.clean_html">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._clean_html.</code><code class="descname">clean_html</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_clean_html.html#clean_html"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._clean_html.clean_html" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create <cite>body.clean_html</cite> from <cite>body.raw</cite>.</p>
+<p>Configuration options:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">require_language_code</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">en</span>
+</pre></div>
+</div>
+<p>If set, only work on stream items whose language code is the
+specified value; pass others on unchanged.  Defaults to unset.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">include_language_codes</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">en</span><span class="p-Indicator">,</span> <span class="s">&quot;&quot;</span><span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>If set to a non-empty list, only work on stream items whose
+language code is one of the specified values; pass others on
+unchanged.  Defaults to empty list (process all languages).</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">include_mime_types</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="s">&#39;text/html&#39;</span><span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>If set to a non-empty list, only work on stream items whose
+mime type matches one of the specified values. If set to an
+empty list, then all stream items (assuming they match the
+above language criteria) will have <code class="docutils literal"><span class="pre">clean_html</span></code> populated
+from <code class="docutils literal"><span class="pre">body.raw</span></code>. Default to list of just <code class="docutils literal"><span class="pre">text/html</span></code>.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline.force_clean_html.force_clean_html">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline.force_clean_html.</code><code class="descname">force_clean_html</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/force_clean_html.html#force_clean_html"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.force_clean_html.force_clean_html" title="Permalink to this definition">¶</a></dt>
+<dd><p>force <code class="xref py py-attr docutils literal"><span class="pre">clean_html</span></code> to be populated or
+rejects the StreamItem.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._clean_visible.clean_visible">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._clean_visible.</code><code class="descname">clean_visible</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_clean_visible.html#clean_visible"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._clean_visible.clean_visible" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create <code class="docutils literal"><span class="pre">body.clean_visible</span></code> from <code class="docutils literal"><span class="pre">body.clean_html</span></code>.</p>
+<p><code class="xref py py-class docutils literal"><span class="pre">clean_visible</span></code> maintains byte position of all visible text
+in an HTML (or XML) document and removes all of parts that are not
+visible in a web browser.  This allows taggers to operate on the
+visible-only text and any standoff annotation can refer to the
+original byte positions.</p>
+<p>If there is no <code class="docutils literal"><span class="pre">clean_html</span></code>, but there is a <code class="docutils literal"><span class="pre">raw</span></code> property
+with a <code class="docutils literal"><span class="pre">text/plain</span></code> media type, use that value directly.</p>
+<p>This has no useful configuration options.  The configuration
+metadata will include a setting:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">require_clean_html</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</pre></div>
+</div>
+<p>Setting this to <code class="docutils literal"><span class="pre">false</span></code> will always fail.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline.offsets.xpath_offsets">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline.offsets.</code><code class="descname">xpath_offsets</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/offsets.html#xpath_offsets"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.offsets.xpath_offsets" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._pdf_to_text.pdf_to_text">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._pdf_to_text.</code><code class="descname">pdf_to_text</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_pdf_to_text.html#pdf_to_text"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._pdf_to_text.pdf_to_text" title="Permalink to this definition">¶</a></dt>
+<dd><p>returns a kba.pipeline &#8220;transform&#8221; function that attempts to
+generate stream_item.body.clean_visible from body.raw</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._docx_to_text.docx_to_text">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._docx_to_text.</code><code class="descname">docx_to_text</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_docx_to_text.html#docx_to_text"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._docx_to_text.docx_to_text" title="Permalink to this definition">¶</a></dt>
+<dd><p>returns a kba.pipeline &#8220;transform&#8221; function that attempts to
+generate stream_item.body.clean_visible from body.raw</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._title.title">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._title.</code><code class="descname">title</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_title.html#title"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._title.title" title="Permalink to this definition">¶</a></dt>
+<dd><p>Create &#8220;title&#8221; entry in
+<a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.other_content" title="streamcorpus.StreamItem.other_content"><code class="xref py py-attr docutils literal"><span class="pre">other_content</span></code></a>, if it does not
+already exist.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.debug_filter">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">debug_filter</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#debug_filter"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.debug_filter" title="Permalink to this definition">¶</a></dt>
+<dd><p>Remove all stream items except specified ones.</p>
+<p>This is only needed to debug troublesome configurations if there
+are problems with specific stream items.  It has one
+configuration item:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">accept_stream_ids</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">1360783522-ebf059defa41b2812c1f969f28cdb45e</span>
+</pre></div>
+</div>
+<p>Only stream IDs in the list are passed on, all others are dropped.
+Defaults to an empty list (drop all stream items).</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.filter_domains">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">filter_domains</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#filter_domains"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.filter_domains" title="Permalink to this definition">¶</a></dt>
+<dd><p>Remove stream items that are not from a specific domain by
+inspecting first <code class="xref py py-attr docutils literal"><span class="pre">abs_url</span></code> and then
+<code class="xref py py-attr docutils literal"><span class="pre">schost</span></code>.  domain name strings are cleansed.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">filter_domains</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">include_domains</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">example.com</span><span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">include_domains_path</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">path-to-file-with-one-domain-per-line.txt</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">path-to-file-with-one-domain-per-line2.txt</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.filter_domains_substrings">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">filter_domains_substrings</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#filter_domains_substrings"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.filter_domains_substrings" title="Permalink to this definition">¶</a></dt>
+<dd><p>Remove stream items that are not from a domain whose name contains
+one of the specified strings by inspecting first
+<code class="xref py py-attr docutils literal"><span class="pre">abs_url</span></code> and then <code class="xref py py-attr docutils literal"><span class="pre">schost</span></code>.
+Substrings are used exactly as provided without cleansing.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">filter_domains_matching</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">include_substrings</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">example</span><span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">include_substrings_path</span><span class="p-Indicator">:</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">path-to-file-with-one-substring-per-line.txt</span>
+  <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">path-to-file-with-one-substring-per-line2.txt</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._fix_text.fix_text">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._fix_text.</code><code class="descname">fix_text</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_fix_text.html#fix_text"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._fix_text.fix_text" title="Permalink to this definition">¶</a></dt>
+<dd><p>Tries to fix poorly encoded Unicode text on a stream item. It expects
+the raw Unicode encoded text in the <code class="docutils literal"><span class="pre">read_from</span></code> field (default is
+<code class="docutils literal"><span class="pre">raw</span></code>) and writes the fixed text as UTF8 encoding to the
+<code class="docutils literal"><span class="pre">write_to</span></code> field (default is <code class="docutils literal"><span class="pre">clean_visible</span></code>).</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._dedup.dedup">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._dedup.</code><code class="descname">dedup</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_dedup.html#dedup"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._dedup.dedup" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._dump_label_stats.dump_label_stats">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._dump_label_stats.</code><code class="descname">dump_label_stats</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_dump_label_stats.html#dump_label_stats"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._dump_label_stats.dump_label_stats" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.id_filter">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">id_filter</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#id_filter"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.id_filter" title="Permalink to this definition">¶</a></dt>
+<dd><p>Include or exclude specific stream items by doc_id or stream_id</p>
+<p>If specific stream items have been identified, e.g. as causing
+problems with a tagger or other stages, then this can remove them
+before they run.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">id_filter</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">excluded_stream_ids_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">file-of-one-stream-id-per-line.txt.xz</span>
+  <span class="l-Scalar-Plain">excluded_stream_ids</span><span class="p-Indicator">:</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">1360783522-ebf059defa41b2812c1f969f28cdb45e</span>
+  <span class="l-Scalar-Plain">included_stream_ids_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">file-of-one-stream-id-per-line.txt.xz</span>
+  <span class="l-Scalar-Plain">included_stream_ids</span><span class="p-Indicator">:</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">1360783522-ebf059defa41b2812c1f969f28cdb45e</span>
+  <span class="l-Scalar-Plain">included_doc_ids_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">file-of-one-doc-id-per-line.txt.xz</span>
+  <span class="l-Scalar-Plain">included_doc_ids</span><span class="p-Indicator">:</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">ebf059defa41b2812c1f969f28cdb45e</span>
+  <span class="l-Scalar-Plain">excluded_doc_ids_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">file-of-one-doc-id-per-line.txt.xz</span>
+  <span class="l-Scalar-Plain">excluded_doc_ids</span><span class="p-Indicator">:</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">ebf059defa41b2812c1f969f28cdb45e</span>
+</pre></div>
+</div>
+<p>Stream IDs in the <cite>excluded_stream_ids</cite> list are dropped, all
+others are passed on unmodified.  Defaults to an empty list (don&#8217;t
+drop any stream items).</p>
+<p>In addition to listing Stream IDs in the yaml itself, you can pass
+<cite>excluded_stream_ids_path</cite> with one Stream ID per line.  This file
+can be optionally be xz-compressed.</p>
+</dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus_pipeline._guess_media_type.file_type_stats">
+<code class="descclassname">streamcorpus_pipeline._guess_media_type.</code><code class="descname">file_type_stats</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_guess_media_type.html#file_type_stats"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._guess_media_type.file_type_stats" title="Permalink to this definition">¶</a></dt>
+<dd><p>returns a kba.pipeline &#8220;transform&#8221; function that generates file
+type stats from the stream_items that it sees.  Currently, these
+stats are just the first five non-whitespace characters.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.filter_languages">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">filter_languages</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#filter_languages"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.filter_languages" title="Permalink to this definition">¶</a></dt>
+<dd><p>Remove stream items that aren&#8217;t in specific languages.</p>
+<p>This looks at the <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.body" title="streamcorpus.StreamItem.body"><code class="xref py py-attr docutils literal"><span class="pre">body</span></code></a>
+<a class="reference internal" href="streamcorpus.html#streamcorpus.ContentItem.language" title="streamcorpus.ContentItem.language"><code class="xref py py-attr docutils literal"><span class="pre">language</span></code></a> field.  It has
+two configuration options:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">filter_languages</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">allow_null_language</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">True</span>
+  <span class="l-Scalar-Plain">included_language_codes</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">en</span><span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>If the language field is empty, the stream item is dropped unless
+<cite>allow_null_language</cite> is true (default value).  Otherwise, the
+stream item is dropped unless its language code is one of the
+<cite>included_language_codes</cite> values (defaults to empty list).</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.filter_tagger_ids">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">filter_tagger_ids</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#filter_tagger_ids"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.filter_tagger_ids" title="Permalink to this definition">¶</a></dt>
+<dd><p>Remove stream items that lack a StreamItem.body.sentences entry
+from specified tagger_id(s)</p>
+<p>This looks at the <code class="xref py py-attr docutils literal"><span class="pre">sentences</span></code>
+field.  It has two configuration options:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">filter_tagger_ids</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">tagger_ids_to_keep</span><span class="p-Indicator">:</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">serif</span>
+</pre></div>
+</div>
+<p>If the none of the tagger_ids_to_keep are in
+<code class="xref py py-attr docutils literal"><span class="pre">sentences</span></code>, the stream item
+is dropped.  If one of the required tagger_ids is present, but
+points to an empty list, then it is also dropped.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._find.find">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._find.</code><code class="descname">find</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_find.html#find"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._find.find" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._find.find_doc_ids">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._find.</code><code class="descname">find_doc_ids</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_find.html#find_doc_ids"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._find.find_doc_ids" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._guess_media_type.guess_media_type">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._guess_media_type.</code><code class="descname">guess_media_type</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_guess_media_type.html#guess_media_type"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._guess_media_type.guess_media_type" title="Permalink to this definition">¶</a></dt>
+<dd><p>returns a kba.pipeline &#8220;transform&#8221; function that populates
+body.media_type if it is empty and the content type is easily
+guessed.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._handle_unconvertible_spinn3r.handle_unconvertible_spinn3r">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._handle_unconvertible_spinn3r.</code><code class="descname">handle_unconvertible_spinn3r</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_handle_unconvertible_spinn3r.html#handle_unconvertible_spinn3r"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._handle_unconvertible_spinn3r.handle_unconvertible_spinn3r" title="Permalink to this definition">¶</a></dt>
+<dd><p>It seems that some of the spinn3r content is not actually UTF-8
+and there is no record of the original encoding, so we take a shot
+at converting the spinn3r-provided &#8220;content_extract&#8221; into utf8 and
+using it as the clean_html.  If that fails, we drop the entire
+document from the corpus.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._hyperlink_labels.hyperlink_labels">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._hyperlink_labels.</code><code class="descname">hyperlink_labels</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_hyperlink_labels.html#hyperlink_labels"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._hyperlink_labels.hyperlink_labels" title="Permalink to this definition">¶</a></dt>
+<dd><p>Creates document labels from hyperlinks in <code class="docutils literal"><span class="pre">body.clean_html</span></code>.</p>
+<p>The labels are attached to the stream item body with an annotator
+ID of <code class="docutils literal"><span class="pre">author</span></code>.  Any HTML <code class="docutils literal"><span class="pre">&lt;a</span> <span class="pre">href=&quot;...&quot;&gt;</span></code> matching the selection
+criteria will be turned into a label.</p>
+<p>You generally must set either <code class="docutils literal"><span class="pre">all_domains</span></code> or
+<code class="docutils literal"><span class="pre">domain_substrings</span></code>.  A typical configuration will look like:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">streamcorpus_pipeline</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">incremental_transforms</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="nv">...</span><span class="p-Indicator">,</span> <span class="nv">hyperlink_labels</span><span class="p-Indicator">,</span> <span class="nv">...</span> <span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">hyperlink_labels</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">require_abs_url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+    <span class="l-Scalar-Plain">domain_substrings</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="s">&quot;trec-kba.org&quot;</span> <span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>Configuration options:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">all_domains</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+<span class="l-Scalar-Plain">domain_substrings</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span> <span class="s">&#39;trec-kba.org&#39;</span> <span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>A label will only be produced if <code class="docutils literal"><span class="pre">all_domains</span></code> is true, or if
+the hostname part of the URL has one of <code class="docutils literal"><span class="pre">domain_substrings</span></code> as a
+substring.  Note that the default configuration is <code class="docutils literal"><span class="pre">all_domains</span></code>
+false and an empty <code class="docutils literal"><span class="pre">domain_substrings</span></code> list, so no labels will
+be produced without additional configuration.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">require_abs_url</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</pre></div>
+</div>
+<p>Only produce labels for fully-qualified <code class="docutils literal"><span class="pre">http://...</span></code> URLs.  False
+by default.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">offset_types</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">BYTES</span><span class="p-Indicator">]</span>
+</pre></div>
+</div>
+<p>A list containing at least one of <code class="docutils literal"><span class="pre">BYTES</span></code> and <code class="docutils literal"><span class="pre">LINES</span></code>
+indicating what sort of document offset should be attached to the
+label.  Only the first value is used.  <code class="docutils literal"><span class="pre">LINES</span></code> is not
+recommended.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">require_clean_html</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</pre></div>
+</div>
+<p>Cannot be changed.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._upgrade_streamcorpus.keep_annotated">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._upgrade_streamcorpus.</code><code class="descname">keep_annotated</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_upgrade_streamcorpus.html#keep_annotated"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._upgrade_streamcorpus.keep_annotated" title="Permalink to this definition">¶</a></dt>
+<dd><p>returns a kba.pipeline &#8220;transform&#8221; function that populates takes
+in v0_1_0 StreamItems and emits v0_2_0 StreamItems</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._language.language">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._language.</code><code class="descname">language</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_language.html#language"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._language.language" title="Permalink to this definition">¶</a></dt>
+<dd><p>Guess at a language from <code class="docutils literal"><span class="pre">body</span></code>.</p>
+<p>This always adds a <code class="docutils literal"><span class="pre">language</span></code> annotation to the body, but if
+the body does not have a raw part or the language cannot be reliably
+detected, it may be empty.</p>
+<p>This attempts to detect on <code class="docutils literal"><span class="pre">body.clean_html</span></code> if present, and
+then <code class="docutils literal"><span class="pre">body.clean_visible</span></code> if present, and then falls back to
+attempting to use <code class="docutils literal"><span class="pre">body.encoding</span></code> to decode the <code class="docutils literal"><span class="pre">body.raw</span></code> and
+tries to detect language from the output of that, and finally, it
+attempts to detect language on undecoded <code class="docutils literal"><span class="pre">body.raw</span></code>.</p>
+<p>This has no configuration options.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._nilsimsa.nilsimsa">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._nilsimsa.</code><code class="descname">nilsimsa</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_nilsimsa.html#nilsimsa"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._nilsimsa.nilsimsa" title="Permalink to this definition">¶</a></dt>
+<dd><p>Creates <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.other_content" title="streamcorpus.StreamItem.other_content"><code class="xref py py-attr docutils literal"><span class="pre">other_content</span></code></a> with key <cite>nilsimsa</cite>
+and a <cite>raw</cite> property set to
+<cite>Nilsimsa(cleanse(si.body.clean_visible)).hexdigest()</cite></p>
+<p>This has no configuration options.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.remove_raw">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">remove_raw</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#remove_raw"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.remove_raw" title="Permalink to this definition">¶</a></dt>
+<dd><p>Remove the raw form of the content.</p>
+<p>While the <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.body" title="streamcorpus.StreamItem.body"><code class="xref py py-attr docutils literal"><span class="pre">body</span></code></a>
+<a class="reference internal" href="streamcorpus.html#streamcorpus.ContentItem.raw" title="streamcorpus.ContentItem.raw"><code class="xref py py-attr docutils literal"><span class="pre">raw</span></code></a> form is important as inputs
+to create the &#8220;clean&#8221; forms, it may be bulky and not useful later.
+This strips the raw form, replacing it with an empty string.  It
+has one configuration option:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">remove_raw</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">if_clean_visible_remove_raw</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">True</span>
+</pre></div>
+</div>
+<p>If <cite>if_clean_visible_remove_raw</cite> is set (defaults to false),
+the raw form is only removed if the clean_visible form is
+available; otherwise it is always removed.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.replace_raw">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">replace_raw</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#replace_raw"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.replace_raw" title="Permalink to this definition">¶</a></dt>
+<dd><p>Replace the <cite>raw</cite> form of the content with <cite>clean_html</cite>, or delete
+the StreamItem if it lacks <cite>clean_html</cite>.</p>
+<p>While the <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.body" title="streamcorpus.StreamItem.body"><code class="xref py py-attr docutils literal"><span class="pre">body</span></code></a>
+<a class="reference internal" href="streamcorpus.html#streamcorpus.ContentItem.raw" title="streamcorpus.ContentItem.raw"><code class="xref py py-attr docutils literal"><span class="pre">raw</span></code></a> form is important as inputs
+to create the &#8220;clean&#8221; forms, it may be bulky and not useful later.
+This strips the raw form, replacing it with clean_html.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._filters.dump_stream_id_abs_url">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._filters.</code><code class="descname">dump_stream_id_abs_url</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_filters.html#dump_stream_id_abs_url"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._filters.dump_stream_id_abs_url" title="Permalink to this definition">¶</a></dt>
+<dd><p>print <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.stream_id" title="streamcorpus.StreamItem.stream_id"><code class="xref py py-attr docutils literal"><span class="pre">stream_id</span></code></a>,
+<a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem.abs_url" title="streamcorpus.StreamItem.abs_url"><code class="xref py py-attr docutils literal"><span class="pre">abs_url</span></code></a> strings to stdout and do
+not pass any <code class="xref py py-class docutils literal"><span class="pre">StreamItems</span></code> down the pipeline</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._upgrade_streamcorpus.upgrade_streamcorpus">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._upgrade_streamcorpus.</code><code class="descname">upgrade_streamcorpus</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_upgrade_streamcorpus.html#upgrade_streamcorpus"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._upgrade_streamcorpus.upgrade_streamcorpus" title="Permalink to this definition">¶</a></dt>
+<dd><p>returns a kba.pipeline &#8220;transform&#8221; function that populates takes
+in v0_1_0 StreamItems and emits v0_2_0 StreamItems</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._upgrade_streamcorpus_v0_3_0.upgrade_streamcorpus_v0_3_0">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._upgrade_streamcorpus_v0_3_0.</code><code class="descname">upgrade_streamcorpus_v0_3_0</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_upgrade_streamcorpus_v0_3_0.html#upgrade_streamcorpus_v0_3_0"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._upgrade_streamcorpus_v0_3_0.upgrade_streamcorpus_v0_3_0" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._tokenizer.nltk_tokenizer">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._tokenizer.</code><code class="descname">nltk_tokenizer</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_tokenizer.html#nltk_tokenizer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._tokenizer.nltk_tokenizer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Minimal tokenizer using <code class="xref py py-mod docutils literal"><span class="pre">nltk</span></code>.</p>
+<p>This is an incremental transform that creates minimal tokens and
+does minimal label alignment.  The stream item must have a
+<cite>clean_visible</cite> part already.  The stream item is tagged with
+<code class="docutils literal"><span class="pre">nltk_tokenizer</span></code>.</p>
+<p>This tokenizer has very few dependencies, only the <code class="xref py py-mod docutils literal"><span class="pre">nltk</span></code>
+Python package.  However, the tokens that it creates are
+extremely minimal, with no part-of-speech details or other
+information.  The tokens only contain the <cite>token</cite> property and
+character-offset information.</p>
+<p>If there are labels with character offsets attached to the stream
+item body, and this stage is configured with an <cite>annotator_id</cite>,
+then this stage attempts to attach those labels to tokens.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="batch-transforms">
+<h3>3.4.3. Batch transforms<a class="headerlink" href="#batch-transforms" title="Permalink to this headline">¶</a></h3>
+<dl class="class">
+<dt id="streamcorpus_pipeline._taggers.byte_offset_align_labels">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._taggers.</code><code class="descname">byte_offset_align_labels</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_taggers.html#byte_offset_align_labels"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._taggers.byte_offset_align_labels" title="Permalink to this definition">¶</a></dt>
+<dd><p>requires config[&#8216;annotator_id&#8217;] (which person/org did manual labelling)
+requires config[&#8216;tagger_id&#8217;] (which software did tagging to process)</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._taggers.line_offset_align_labels">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._taggers.</code><code class="descname">line_offset_align_labels</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_taggers.html#line_offset_align_labels"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._taggers.line_offset_align_labels" title="Permalink to this definition">¶</a></dt>
+<dd><p>requires config[&#8216;annotator_id&#8217;] (which person/org did manual labelling)
+requires config[&#8216;tagger_id&#8217;] (which software did tagging to process)</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._taggers.name_align_labels">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._taggers.</code><code class="descname">name_align_labels</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_taggers.html#name_align_labels"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._taggers.name_align_labels" title="Permalink to this definition">¶</a></dt>
+<dd><p>requires config[&#8216;chain_selector&#8217;] = ALL | ANY
+requires config[&#8216;annotator_id&#8217;] (which person/org did manual labelling)</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._lingpipe.lingpipe">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._lingpipe.</code><code class="descname">lingpipe</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_lingpipe.html#lingpipe"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._lingpipe.lingpipe" title="Permalink to this definition">¶</a></dt>
+<dd><p>a streamcorpus_pipeline batch transform that converts a chunk into a new
+chunk with data generated by LingPipe</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._serif.serif">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._serif.</code><code class="descname">serif</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_serif.html#serif"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._serif.serif" title="Permalink to this definition">¶</a></dt>
+<dd><p>Batch transform to parse and tag documents with Serif.</p>
+<p>Serif must be installed externally, somewhere underneath the
+directory configured as <cite>third_dir_path</cite> in the top-level
+pipeline configuration.</p>
+<p>A typical Serif pipeline configuration looks like:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">streamcorpus_pipeline</span><span class="p-Indicator">:</span>
+  <span class="l-Scalar-Plain">tmp_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">tmp</span>
+  <span class="l-Scalar-Plain">third_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/opt/diffeo/third</span>
+  <span class="l-Scalar-Plain">reader</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">...</span>
+  <span class="l-Scalar-Plain">incremental_transforms</span><span class="p-Indicator">:</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">language</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">guess_media_type</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">clean_html</span>
+    <span class="p-Indicator">-</span> <span class="l-Scalar-Plain">clean_visible</span>
+  <span class="l-Scalar-Plain">batch_transforms</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">serif</span><span class="p-Indicator">]</span>
+  <span class="l-Scalar-Plain">writers</span><span class="p-Indicator">:</span> <span class="p-Indicator">[</span><span class="nv">...</span><span class="p-Indicator">]</span>
+
+  <span class="l-Scalar-Plain">serif</span><span class="p-Indicator">:</span>
+    <span class="l-Scalar-Plain">path_in_third</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">serif/serif-latest</span>
+    <span class="l-Scalar-Plain">par</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">streamcorpus_one_step</span>
+    <span class="l-Scalar-Plain">align_labels_by</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">names_in_chains</span>
+    <span class="l-Scalar-Plain">aligner_data</span><span class="p-Indicator">:</span>
+      <span class="l-Scalar-Plain">chain_selector</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">ALL</span>
+      <span class="l-Scalar-Plain">annotator_id</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">annotator</span>
+</pre></div>
+</div>
+<p>Configuration options include:</p>
+<dl class="docutils">
+<dt><cite>path_in_third</cite> (required)</dt>
+<dd>Relative path in <cite>third_dir_path</cite> to directory containing serif
+data directories</dd>
+<dt><cite>serif_exe</cite> (default: bin/x86_64/Serif)</dt>
+<dd>Relative path within <cite>path_in_third</cite> to the Serif executable file</dd>
+<dt><cite>par</cite> (default: streamcorpus_one_step)</dt>
+<dd>Serif policy configuration; this is typically <code class="docutils literal"><span class="pre">streamcorpus_one_step</span></code>,
+but may also be <code class="docutils literal"><span class="pre">streamcorpus_read_serifxml</span></code> or
+<code class="docutils literal"><span class="pre">streamcorpus_generate_serifxml</span></code></dd>
+<dt><cite>par_additions</cite></dt>
+<dd>Map from poicy configuration name to list of strings to append
+as additional lines to customize the policy.</dd>
+<dt><cite>cleanup_tmp_files</cite> (default: true)</dt>
+<dd>Delete the intermediate files used by Serif</dd>
+</dl>
+<p>The two &#8220;align&#8221; options control how ratings on the document
+are associated with tokens generated by Serif.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="writers">
+<h3>3.4.4. Writers<a class="headerlink" href="#writers" title="Permalink to this headline">¶</a></h3>
+<dl class="class">
+<dt id="streamcorpus_pipeline._local_storage.to_local_chunks">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._local_storage.</code><code class="descname">to_local_chunks</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_local_storage.html#to_local_chunks"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._local_storage.to_local_chunks" title="Permalink to this definition">¶</a></dt>
+<dd><p>Write output to a local chunk file.</p>
+<div class="admonition warning">
+<p class="first admonition-title">Warning</p>
+<p class="last">This stage must be listed last in the <code class="docutils literal"><span class="pre">writers</span></code> list.
+For efficiency it renames the intermediate chunk file,
+and so any subsequent writer stages will have no input
+chunk file to work with.</p>
+</div>
+<p>This stage may take several additional configuration parameters.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">output_type</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">samedir</span>
+</pre></div>
+</div>
+<p>Where to place the output: <code class="docutils literal"><span class="pre">inplace</span></code> replaces the input file;
+<code class="docutils literal"><span class="pre">samedir</span></code> uses the <cite>output_name</cite> in the same directory as the
+input; and <code class="docutils literal"><span class="pre">otherdir</span></code> uses <cite>output_name</cite> in <cite>output_path</cite>.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">output_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/home/diffeo/outputs</span>
+</pre></div>
+</div>
+<p>If <cite>output_type</cite> is <code class="docutils literal"><span class="pre">otherdir</span></code>, the name of the directory to
+write to.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">output_name</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">output-%(first)d.sc</span>
+</pre></div>
+</div>
+<p>Gives the name of the output file if <cite>output_type</cite> is not
+<code class="docutils literal"><span class="pre">inplace</span></code>.  If this is <code class="docutils literal"><span class="pre">input</span></code> then the output file name is
+automatically derived from the input file name.  This may also
+include Python format string parameters:</p>
+<ul class="simple">
+<li><code class="docutils literal"><span class="pre">%(input_fname)s</span></code>: the basename of the input file name</li>
+<li><code class="docutils literal"><span class="pre">%(input_md5)s</span></code>: the last part of a hyphenated input filename</li>
+<li><code class="docutils literal"><span class="pre">%(md5)s</span></code>: MD5 hash of the chunk file</li>
+<li><code class="docutils literal"><span class="pre">%(first)d</span></code>: index of the first item in the chunk file</li>
+<li><code class="docutils literal"><span class="pre">%(num)d</span></code>: number of items in the chunk file</li>
+<li><code class="docutils literal"><span class="pre">%(epoch_ticks)d</span></code>: timestamp of the first item in the chunk file</li>
+<li><code class="docutils literal"><span class="pre">%(target_names)s</span></code>: hyphenated list of rating target names</li>
+<li><code class="docutils literal"><span class="pre">%(source)s</span></code>: source name for items in the chunk file</li>
+<li><code class="docutils literal"><span class="pre">%(doc_ids_8)s</span></code>: hyphenated list of 8-character suffixes of
+document IDs</li>
+<li><code class="docutils literal"><span class="pre">%(date_hour)s</span></code>: partial timestamp including date and hour</li>
+<li><code class="docutils literal"><span class="pre">%(rand8)s</span></code>: 8-byte random hex string</li>
+</ul>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">compress</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+</pre></div>
+</div>
+<p>If specified, append <code class="docutils literal"><span class="pre">.xz</span></code> to the output file name and
+LZMA-compress the output file.  Defaults to false.</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">cleanup_tmp_files</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+</pre></div>
+</div>
+<p>If set to &#8220;false&#8221;, do not delete the intermediate file (or rename
+it away), enabling later writer stages to be run.  Defaults to
+true.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._local_storage.to_local_tarballs">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._local_storage.</code><code class="descname">to_local_tarballs</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_local_storage.html#to_local_tarballs"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._local_storage.to_local_tarballs" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._kvlayer.to_kvlayer">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._kvlayer.</code><code class="descname">to_kvlayer</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_kvlayer.html#to_kvlayer"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._kvlayer.to_kvlayer" title="Permalink to this definition">¶</a></dt>
+<dd><p>Writer that puts stream items in <a class="reference internal" href="kvlayer.html#module-kvlayer" title="kvlayer"><code class="xref py py-mod docutils literal"><span class="pre">kvlayer</span></code></a>.</p>
+<p><a class="reference internal" href="kvlayer.html#module-kvlayer" title="kvlayer"><code class="xref py py-mod docutils literal"><span class="pre">kvlayer</span></code></a> must be included in the top-level configuration.
+Compressed stream items are written to the
+<code class="xref py py-data docutils literal"><span class="pre">STREAM_ITEMS_TABLE</span></code>
+table.</p>
+<p>This writer has one configuration parameter: <cite>indexes</cite> adds
+additional indexes on the data.  Supported index types include
+<code class="xref py py-data docutils literal"><span class="pre">WITH_SOURCE</span></code>,
+<code class="xref py py-data docutils literal"><span class="pre">BY_TIME</span></code>,
+<code class="xref py py-data docutils literal"><span class="pre">HASH_TF_SID</span></code>,
+<code class="xref py py-data docutils literal"><span class="pre">HASH_FREQUENCIES</span></code>,
+and
+<code class="xref py py-data docutils literal"><span class="pre">HASH_KEYWORD</span></code>.
+The special index type
+<code class="xref py py-data docutils literal"><span class="pre">KEYWORDS</span></code>
+expands to all of the keyword-index tables.</p>
+<p>If keyword indexing is enabled, it indexes the tokens generated
+by some or all of the taggers that have been run, less a set of
+stop words.  The configuration parameter <cite>keyword_tagger_ids</cite> may
+be set to a list of tagger IDs; if it is set, only the tokens
+from those tagger IDs will be indexed.  If it is set to <code class="docutils literal"><span class="pre">null</span></code>
+or left unset, all taggers&#8217; tokens will be indexed as distinct
+words.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._s3_storage.to_s3_chunks">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._s3_storage.</code><code class="descname">to_s3_chunks</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_s3_storage.html#to_s3_chunks"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._s3_storage.to_s3_chunks" title="Permalink to this definition">¶</a></dt>
+<dd><p>Copies chunk files on disk to Amazon S3. The type of data written
+can be specified with the <code class="docutils literal"><span class="pre">output_format</span></code> config option. The
+following values are legal: <code class="docutils literal"><span class="pre">streamitem</span></code> and <code class="docutils literal"><span class="pre">featurecollection</span></code>.</p>
+<p>N.B. The format is only necessary for construction the
+<code class="docutils literal"><span class="pre">output_name</span></code>. The format is also used to pick between an <code class="docutils literal"><span class="pre">fc</span></code>
+(for feature collections) extension and a <code class="docutils literal"><span class="pre">sc</span></code> (for stream items)
+extension.</p>
+<p>The following configuration options are mandatory:
+<code class="docutils literal"><span class="pre">bucket</span></code> is the s3 bucket to use. <code class="docutils literal"><span class="pre">aws_access_key_id_path</span></code>
+and <code class="docutils literal"><span class="pre">aws_secret_access_key_path</span></code> should point to files
+containing your s3 credentials.</p>
+<p><code class="docutils literal"><span class="pre">output_name</span></code> is also required and is expanded in the same way as
+the <a class="reference internal" href="#streamcorpus_pipeline._local_storage.to_local_chunks" title="streamcorpus_pipeline._local_storage.to_local_chunks"><code class="xref py py-class docutils literal"><span class="pre">to_local_chunks</span></code></a>
+writer.  The filename always has <code class="docutils literal"><span class="pre">.{sc,fc}.{xz,gz,sz}</span></code> appended to it
+(depending on the output format specified), and correspondingly,
+the output file is always compressed.  If GPG keys are provided,
+then <code class="docutils literal"><span class="pre">.gpg</span></code> is appended and the file is encrypted.</p>
+<p>The rest of the configuration options are optional and are
+described in the following example:</p>
+<div class="highlight-yaml"><div class="highlight"><pre><span class="l-Scalar-Plain">to_s3_chunks</span><span class="p-Indicator">:</span>
+  <span class="c1"># Mandatory</span>
+  <span class="l-Scalar-Plain">bucket</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">aws-publicdatasets</span>
+  <span class="l-Scalar-Plain">aws_access_key_id_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">keys/aws_access_key_id</span>
+  <span class="l-Scalar-Plain">aws_secret_access_key_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">keys/aws_secret_access_key</span>
+  <span class="l-Scalar-Plain">output_name</span><span class="p-Indicator">:</span> <span class="s">&quot;%(date_hour)s/%(source)s-%(num)d-%(input_fname)s-%(md5)s&quot;</span>
+
+  <span class="c1"># Optional parameters.</span>
+
+  <span class="c1"># The number of times to try writing to s3. A value of</span>
+  <span class="c1"># `1` means the upload is tried exactly once.</span>
+  <span class="c1"># The default value is `10`.</span>
+  <span class="c1"># (This also applies to the verification step.)</span>
+  <span class="l-Scalar-Plain">tries</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">1</span>
+
+  <span class="c1"># When set, the file uploaded will be private.</span>
+  <span class="c1"># Default: false</span>
+  <span class="l-Scalar-Plain">is_private</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+
+  <span class="c1"># When set, the file will be re-downloaded from Amazon, decrypted,</span>
+  <span class="c1"># decompressed and checksummed against the data sent to Amazon.</span>
+  <span class="c1"># (This used to be &quot;verify_via_http&quot;, but this more broadly named</span>
+  <span class="c1"># option applies even when &quot;is_private&quot; is true.)</span>
+  <span class="c1">#</span>
+  <span class="c1"># Default: true</span>
+  <span class="l-Scalar-Plain">verify</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+
+  <span class="c1"># If verification fails `tries` times, then the default</span>
+  <span class="c1"># behavior is to exit, which can cause a rejester</span>
+  <span class="c1"># fork_worker parent to retry the whole job.</span>
+  <span class="c1">#</span>
+  <span class="c1"># Default: false</span>
+  <span class="l-Scalar-Plain">suppress_failures</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">false</span>
+
+  <span class="c1"># This is prepended to every key given. Namely, all s3 URLs</span>
+  <span class="c1"># are formed by `s3://{bucket}/{s3_path_prefix}/{input-key-name}`.</span>
+  <span class="c1"># By default, it is empty.</span>
+  <span class="l-Scalar-Plain">s3_path_prefix</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">some/s3/prefix</span>
+
+  <span class="c1"># Paths to GPG keys. Note that if you&#39;re using verification,</span>
+  <span class="c1"># then a decryption key must be given.</span>
+  <span class="c1"># Default values: None</span>
+  <span class="l-Scalar-Plain">gpg_encryption_key_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">keys/gpg-key.pub</span>
+  <span class="l-Scalar-Plain">gpg_decryption_key_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">keys/gpg-key.private</span>
+
+  <span class="c1"># GPG recipient.</span>
+  <span class="c1"># Default value: trec-kba</span>
+  <span class="l-Scalar-Plain">gpg_recipient</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">trec-kba</span>
+
+  <span class="c1"># Removes the intermediate chunk file from disk.</span>
+  <span class="c1"># Default: true.</span>
+  <span class="l-Scalar-Plain">cleanup_tmp_files</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">true</span>
+
+  <span class="c1"># A temporary directory where intermediate files may reside.</span>
+  <span class="c1"># Uses your system&#39;s default tmp directory (usually `/tmp`)</span>
+  <span class="c1"># by default.</span>
+  <span class="l-Scalar-Plain">tmp_dir_path</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">/tmp</span>
+
+  <span class="c1"># Change compression scheme; default is .xz for greatest</span>
+  <span class="c1"># compression of archival content (S3 charges by the byte).</span>
+  <span class="c1"># xz is also the slowest, so other options can make more</span>
+  <span class="c1"># sense in some applications.  Snappy (.sz) is the fastest</span>
+  <span class="c1"># and still much better than no compression at all.  Choices</span>
+  <span class="c1"># are &quot;xz&quot;, &quot;sz&quot;, &quot;gz&quot;, &quot;&quot;</span>
+  <span class="l-Scalar-Plain">compression</span><span class="p-Indicator">:</span> <span class="l-Scalar-Plain">xz</span>
+</pre></div>
+</div>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline._s3_storage.to_s3_tarballs">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline._s3_storage.</code><code class="descname">to_s3_tarballs</code><span class="sig-paren">(</span><em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_s3_storage.html#to_s3_tarballs"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._s3_storage.to_s3_tarballs" title="Permalink to this definition">¶</a></dt>
+<dd><p>The same as <a class="reference internal" href="#streamcorpus_pipeline._s3_storage.to_s3_chunks" title="streamcorpus_pipeline._s3_storage.to_s3_chunks"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus_pipeline._s3_storage.to_s3_chunks</span></code></a>,
+except it puts stream items into a gzipped tarball instead of
+chunks. This writer does not do any encryption.</p>
+<p>In addition to the required parameters for <code class="docutils literal"><span class="pre">to_s3_chunks</span></code>, this
+writer has three more required parameters: <code class="docutils literal"><span class="pre">tarinfo_name</span></code> (which
+supports <code class="docutils literal"><span class="pre">output_name</span></code> substitution semantics), <code class="docutils literal"><span class="pre">tarinfo_uname</span></code>
+and <code class="docutils literal"><span class="pre">tarinfo_gname</span></code>.</p>
+</dd></dl>
+
+</div>
+<div class="section" id="id1">
+<h3>3.4.5. API<a class="headerlink" href="#id1" title="Permalink to this headline">¶</a></h3>
+<p>All stage objects are constructed with a single parameter, the
+dictionary of configuration specific to the stage.  The stage objects
+can be passed directly to the <code class="docutils literal"><span class="pre">streamcorpus_pipeline.Pipeline</span></code>
+constructor.</p>
+<dl class="class">
+<dt id="streamcorpus_pipeline.stages.StageRegistry">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline.stages.</code><code class="descname">StageRegistry</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#StageRegistry"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.StageRegistry" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal"><span class="pre">_abcoll.MutableMapping</span></code></p>
+<p>List of known stages for a pipeline.</p>
+<p>This is a dictionary, and so <code class="docutils literal"><span class="pre">registry[stagename]</span></code> will retrieve
+the class object or constructor function for the stage.  Each
+stage in the dictionary is a callable of a single parameter, the
+configuration dictionary, which returns a callable appropriate
+for its stage type.  Typical patterns are actual classes and
+wrapper functions:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="k">class</span> <span class="nc">a_stage</span><span class="p">(</span><span class="n">streamcorpus_pipeline</span><span class="o">.</span><span class="n">stages</span><span class="o">.</span><span class="n">Configurable</span><span class="p">):</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;a_stage&#39;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">AStage</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">param</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;param&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;param is </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">param</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">si</span>
+
+<span class="k">def</span> <span class="nf">b_stage</span><span class="p">(</span><span class="n">config</span><span class="p">):</span>
+    <span class="n">param</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;param&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">do_stage</span><span class="p">(</span><span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+       <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;param is </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">param</span><span class="p">)</span>
+       <span class="k">return</span> <span class="n">si</span>
+    <span class="k">return</span> <span class="n">do_stage</span>
+
+<span class="n">registry</span> <span class="o">=</span> <span class="n">StageRegistry</span><span class="p">()</span>
+<span class="n">registry</span><span class="p">[</span><span class="s">&#39;a_stage&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">a_stage</span>
+<span class="n">registry</span><span class="p">[</span><span class="s">&#39;b_stage&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">b_stage</span>
+</pre></div>
+</div>
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.StageRegistry.tryload_stage">
+<code class="descname">tryload_stage</code><span class="sig-paren">(</span><em>moduleName</em>, <em>functionName</em>, <em>name=None</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#StageRegistry.tryload_stage"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.StageRegistry.tryload_stage" title="Permalink to this definition">¶</a></dt>
+<dd><p>Try to load a stage into self, ignoring errors.</p>
+<p>If loading a module fails because of some subordinate load
+failure, just give a warning and move on.  On success the
+stage is added to the stage dictionary.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first last simple">
+<li><strong>moduleName</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; name of the Python module</li>
+<li><strong>functionName</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; name of the stage constructor</li>
+<li><strong>name</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; name of the stage, defaults to <cite>functionName</cite></li>
+</ul>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.StageRegistry.load_external_stages">
+<code class="descname">load_external_stages</code><span class="sig-paren">(</span><em>path</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#StageRegistry.load_external_stages"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.StageRegistry.load_external_stages" title="Permalink to this definition">¶</a></dt>
+<dd><p>Add external stages from the Python module in <cite>path</cite>.</p>
+<p><cite>path</cite> must be a path to a Python module source that contains
+a <cite>Stages</cite> dictionary, which is a map from stage name to callable.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><strong>path</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; path to the module file</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.StageRegistry.load_module_stages">
+<code class="descname">load_module_stages</code><span class="sig-paren">(</span><em>mod</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#StageRegistry.load_module_stages"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.StageRegistry.load_module_stages" title="Permalink to this definition">¶</a></dt>
+<dd><p>Add external stages from the Python module <cite>mod</cite>.</p>
+<p>If <cite>mod</cite> is a string, then it will be interpreted as the name
+of a module; otherwise it is an actual module object.  The
+module should exist somewhere in <a class="reference external" href="http://docs.python.org/library/sys.html#sys.path" title="(in Python v2.7)"><code class="xref py py-data docutils literal"><span class="pre">sys.path</span></code></a>.  The module
+must contain a <cite>Stages</cite> dictionary, which is a map from stage
+name to callable.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><strong>mod</strong> &#8211; name of the module or the module itself</td>
+</tr>
+<tr class="field-even field"><th class="field-name" colspan="2">Raises <a class="reference external" href="http://docs.python.org/library/exceptions.html#exceptions.ImportError" title="(in Python v2.7)">exceptions.ImportError</a>:</th></tr>
+<tr class="field-even field"><td>&nbsp;</td><td class="field-body">if <cite>mod</cite> cannot be loaded or does
+not contain <code class="docutils literal"><span class="pre">Stages</span></code></td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.StageRegistry.init_stage">
+<code class="descname">init_stage</code><span class="sig-paren">(</span><em>name</em>, <em>config</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#StageRegistry.init_stage"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.StageRegistry.init_stage" title="Permalink to this definition">¶</a></dt>
+<dd><p>Construct and configure a stage from known stages.</p>
+<p><cite>name</cite> must be the name of one of the stages in this.  <cite>config</cite>
+is the configuration dictionary of the containing object, and its <cite>name</cite>
+member will be passed into the stage constructor.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first simple">
+<li><strong>name</strong> (<a class="reference external" href="http://docs.python.org/library/functions.html#str" title="(in Python v2.7)"><em>str</em></a>) &#8211; name of the stage</li>
+<li><strong>config</strong> (<a class="reference external" href="http://docs.python.org/library/stdtypes.html#dict" title="(in Python v2.7)"><em>dict</em></a>) &#8211; parent object configuration</li>
+</ul>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first">callable stage</p>
+</td>
+</tr>
+<tr class="field-odd field"><th class="field-name" colspan="2">Raises <a class="reference external" href="http://docs.python.org/library/exceptions.html#exceptions.KeyError" title="(in Python v2.7)">exceptions.KeyError</a>:</th></tr>
+<tr class="field-odd field"><td>&nbsp;</td><td class="field-body"><p class="first last">if <cite>name</cite> is not a known stage</p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline.stages.PipelineStages">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline.stages.</code><code class="descname">PipelineStages</code><span class="sig-paren">(</span><em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#PipelineStages"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.PipelineStages" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#streamcorpus_pipeline.stages.StageRegistry" title="streamcorpus_pipeline.stages.StageRegistry"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus_pipeline.stages.StageRegistry</span></code></a></p>
+<p>The list of stages, preloaded with streamcorpus_pipeline stages.</p>
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline.stages.Configured">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline.stages.</code><code class="descname">Configured</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#Configured"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.Configured" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference external" href="http://docs.python.org/library/functions.html#object" title="(in Python v2.7)"><code class="xref py py-class docutils literal"><span class="pre">object</span></code></a></p>
+<p>Any object containing a configuration.</p>
+<p>The configuration is passed to the constructor.</p>
+<dl class="attribute">
+<dt id="streamcorpus_pipeline.stages.Configured.config">
+<code class="descname">config</code><a class="headerlink" href="#streamcorpus_pipeline.stages.Configured.config" title="Permalink to this definition">¶</a></dt>
+<dd><p>The configuration dictionary for this object.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline.stages.BatchTransform">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline.stages.</code><code class="descname">BatchTransform</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#BatchTransform"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.BatchTransform" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#streamcorpus_pipeline.stages.Configured" title="streamcorpus_pipeline.stages.Configured"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus_pipeline.stages.Configured</span></code></a></p>
+<p>Transform that acts on an entire <a class="reference internal" href="streamcorpus.html#streamcorpus.Chunk" title="streamcorpus.Chunk"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.Chunk</span></code></a> file.</p>
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.BatchTransform.process_path">
+<code class="descname">process_path</code><span class="sig-paren">(</span><em>chunk_path</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#BatchTransform.process_path"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.BatchTransform.process_path" title="Permalink to this definition">¶</a></dt>
+<dd><p>Process a chunk file at a specific path.</p>
+<p>Implementations should work in place, writing results out to the
+same <cite>chunk_path</cite>.  The pipeline guarantees that this stage
+will have a key <code class="docutils literal"><span class="pre">tmp_dir_path</span></code> in its configuration, and this
+can be used to store an intermediate file which is then renamed
+over <cite>chunk_path</cite>.</p>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.BatchTransform.shutdown">
+<code class="descname">shutdown</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#BatchTransform.shutdown"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.BatchTransform.shutdown" title="Permalink to this definition">¶</a></dt>
+<dd><p>Do an orderly shutdown of this stage.</p>
+<p>If the stage spawns a child process, kill it, and do any other
+required cleanup.  <code class="xref py py-meth docutils literal"><span class="pre">streamcorpus_pipeline.Pipeline._cleanup()</span></code>
+will call this method on every batch transform stage, regardless
+of whether this is the currently running stage or not.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="class">
+<dt id="streamcorpus_pipeline.stages.IncrementalTransform">
+<em class="property">class </em><code class="descclassname">streamcorpus_pipeline.stages.</code><code class="descname">IncrementalTransform</code><span class="sig-paren">(</span><em>config</em>, <em>*args</em>, <em>**kwargs</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#IncrementalTransform"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.IncrementalTransform" title="Permalink to this definition">¶</a></dt>
+<dd><p>Bases: <a class="reference internal" href="#streamcorpus_pipeline.stages.Configured" title="streamcorpus_pipeline.stages.Configured"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus_pipeline.stages.Configured</span></code></a>, <code class="xref py py-class docutils literal"><span class="pre">_abcoll.Callable</span></code></p>
+<p>Transform that acts on individual streamcorpus StreamItem objects.</p>
+<p>The pipeline can run any stage with an appropriate <code class="xref py py-meth docutils literal"><span class="pre">__call__()</span></code>
+method.  The <code class="xref py py-meth docutils literal"><span class="pre">__call__()</span></code> or <a class="reference internal" href="#streamcorpus_pipeline.stages.IncrementalTransform.process_item" title="streamcorpus_pipeline.stages.IncrementalTransform.process_item"><code class="xref py py-meth docutils literal"><span class="pre">process_item()</span></code></a> methods are
+called once per stream item, reusing the same transform object.</p>
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.IncrementalTransform.process_item">
+<code class="descname">process_item</code><span class="sig-paren">(</span><em>stream_item</em>, <em>context</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#IncrementalTransform.process_item"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.IncrementalTransform.process_item" title="Permalink to this definition">¶</a></dt>
+<dd><p>Process a single <a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamItem</span></code></a> object.</p>
+<p><cite>context</cite> is shared across all stages.  It is guaranteed to
+contain <code class="docutils literal"><span class="pre">i_str</span></code> nominally containing the original input file
+name and <code class="docutils literal"><span class="pre">data</span></code> nominally containing the auxiliary data from
+the work item.</p>
+<p>This function may modify <cite>stream_item</cite> in place, construct
+a new item and return it, or return <code class="xref py py-const docutils literal"><span class="pre">None</span></code> to drop
+the item.</p>
+<table class="docutils field-list" frame="void" rules="none">
+<col class="field-name" />
+<col class="field-body" />
+<tbody valign="top">
+<tr class="field-odd field"><th class="field-name">Parameters:</th><td class="field-body"><ul class="first simple">
+<li><strong>stream_item</strong> (<a class="reference internal" href="streamcorpus.html#streamcorpus.StreamItem" title="streamcorpus.StreamItem"><code class="xref py py-class docutils literal"><span class="pre">streamcorpus.StreamItem</span></code></a>) &#8211; stream item to process</li>
+<li><strong>context</strong> (<a class="reference external" href="http://docs.python.org/library/stdtypes.html#dict" title="(in Python v2.7)"><em>dict</em></a>) &#8211; additional shared context data</li>
+</ul>
+</td>
+</tr>
+<tr class="field-even field"><th class="field-name">Returns:</th><td class="field-body"><p class="first last">same or different stream item or <code class="xref py py-const docutils literal"><span class="pre">None</span></code></p>
+</td>
+</tr>
+</tbody>
+</table>
+</dd></dl>
+
+<dl class="method">
+<dt id="streamcorpus_pipeline.stages.IncrementalTransform.shutdown">
+<code class="descname">shutdown</code><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/stages.html#IncrementalTransform.shutdown"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline.stages.IncrementalTransform.shutdown" title="Permalink to this definition">¶</a></dt>
+<dd><p>Do an orderly shutdown of this stage.</p>
+<p>Incremental transforms are generally simple Python code and
+a complicated shutdown is not required.  The pipeline does not
+call this method.</p>
+</dd></dl>
+
+</dd></dl>
+
+</div>
+</div>
+<div class="section" id="module-streamcorpus_pipeline._rejester">
+<span id="rejester-integration"></span><h2>3.5. <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> integration<a class="headerlink" href="#module-streamcorpus_pipeline._rejester" title="Permalink to this headline">¶</a></h2>
+<p>Support for running pipeline  tasks under <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a>.</p>
+<p>Since running pipeline stages can be expensive, particularly if busy
+third-party stages are run, it can be desirable to run the pipeline
+under the <a class="reference internal" href="rejester.html#module-rejester" title="rejester"><code class="xref py py-mod docutils literal"><span class="pre">rejester</span></code></a> distributed-computing framework.  This
+module provides rejester &#8220;run&#8221; and &#8220;terminate&#8221; functions that run
+the pipeline.  A typical rejester work spec will look like:</p>
+<div class="highlight-python"><div class="highlight"><pre><span class="n">work_spec</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;name&#39;</span><span class="p">:</span> <span class="s">&#39;pipeline&#39;</span><span class="p">,</span>
+    <span class="s">&#39;desc&#39;</span><span class="p">:</span> <span class="s">&#39;run streamcorpus_pipeline&#39;</span><span class="p">,</span>
+    <span class="s">&#39;min_gb&#39;</span><span class="p">:</span> <span class="mi">8</span><span class="p">,</span>
+    <span class="s">&#39;config&#39;</span><span class="p">:</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">get_global_config</span><span class="p">(),</span>
+    <span class="s">&#39;module&#39;</span><span class="p">:</span> <span class="s">&#39;streamcorpus_pipeline._rejester&#39;</span><span class="p">,</span>
+    <span class="s">&#39;run_function&#39;</span><span class="p">:</span> <span class="s">&#39;rejester_run_function&#39;</span><span class="p">,</span>
+    <span class="s">&#39;terminate_function&#39;</span><span class="p">:</span> <span class="s">&#39;rejester_terminate_function&#39;</span><span class="p">,</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>Work units have an input filename or other description as a key, and
+any non-empty dictionary as their data.  They are processed using
+<code class="xref py py-meth docutils literal"><span class="pre">streamcorpus_pipeline.Pipeline._process_task()</span></code>.  Pass the work
+spec and work unit dictionaries to
+<a class="reference internal" href="rejester.html#rejester.TaskMaster.update_bundle" title="rejester.TaskMaster.update_bundle"><code class="xref py py-meth docutils literal"><span class="pre">rejester.TaskMaster.update_bundle()</span></code></a> to inject the work
+definitions.</p>
+<p>Note that this framework makes no effort to actually distribute the
+data around.  Either only run rejester jobs on one system, or ensure
+that all systems running rejester workers have a shared filesystem
+such as NFS, or use network-based reader and writer stages such as
+<a class="reference internal" href="#streamcorpus_pipeline._s3_storage.from_s3_chunks" title="streamcorpus_pipeline._s3_storage.from_s3_chunks"><code class="xref py py-class docutils literal"><span class="pre">from_s3_chunks</span></code></a> and
+<a class="reference internal" href="#streamcorpus_pipeline._kvlayer.to_kvlayer" title="streamcorpus_pipeline._kvlayer.to_kvlayer"><code class="xref py py-class docutils literal"><span class="pre">to_kvlayer</span></code></a>.</p>
+<dl class="function">
+<dt id="streamcorpus_pipeline._rejester.rejester_run_function">
+<code class="descclassname">streamcorpus_pipeline._rejester.</code><code class="descname">rejester_run_function</code><span class="sig-paren">(</span><em>work_unit</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_rejester.html#rejester_run_function"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._rejester.rejester_run_function" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+<dl class="function">
+<dt id="streamcorpus_pipeline._rejester.rejester_terminate_function">
+<code class="descclassname">streamcorpus_pipeline._rejester.</code><code class="descname">rejester_terminate_function</code><span class="sig-paren">(</span><em>work_unit</em><span class="sig-paren">)</span><a class="reference internal" href="../_modules/streamcorpus_pipeline/_rejester.html#rejester_terminate_function"><span class="viewcode-link">[source]</span></a><a class="headerlink" href="#streamcorpus_pipeline._rejester.rejester_terminate_function" title="Permalink to this definition">¶</a></dt>
+<dd></dd></dl>
+
+</div>
+</div>
+
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+  <h3><a href="../index.html">Table Of Contents</a></h3>
+  <ul>
+<li><a class="reference internal" href="#">3. <code class="docutils literal"><span class="pre">streamcorpus_pipeline</span></code> &#8212; stream item processing framework</a><ul>
+<li><a class="reference internal" href="#module-streamcorpus_pipeline.run">3.1. <strong class="command">streamcorpus_pipeline</strong></a></li>
+<li><a class="reference internal" href="#module-streamcorpus_pipeline._directory">3.2. <strong class="command">streamcorpus_directory</strong></a></li>
+<li><a class="reference internal" href="#module-streamcorpus_pipeline._pipeline">3.3. Pipeline configuration and execution</a><ul>
+<li><a class="reference internal" href="#configuration">3.3.1. Configuration</a></li>
+<li><a class="reference internal" href="#api">3.3.2. API</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#module-streamcorpus_pipeline.stages">3.4. Pipeline stages</a><ul>
+<li><a class="reference internal" href="#readers">3.4.1. Readers</a></li>
+<li><a class="reference internal" href="#incremental-transforms">3.4.2. Incremental transforms</a></li>
+<li><a class="reference internal" href="#batch-transforms">3.4.3. Batch transforms</a></li>
+<li><a class="reference internal" href="#writers">3.4.4. Writers</a></li>
+<li><a class="reference internal" href="#id1">3.4.5. API</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#module-streamcorpus_pipeline._rejester">3.5. <code class="docutils literal"><span class="pre">rejester</span></code> integration</a></li>
+</ul>
+</li>
+</ul>
+
+  <h4>Previous topic</h4>
+  <p class="topless"><a href="streamcorpus.html"
+                        title="previous chapter">2. <code class="docutils literal"><span class="pre">streamcorpus</span></code> &#8212; single-document data representation</a></p>
+  <h4>Next topic</h4>
+  <p class="topless"><a href="yakonfig.html"
+                        title="next chapter">4. <code class="docutils literal"><span class="pre">yakonfig</span></code> &#8212; global configuration management tools</a></p>
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/sphinx-docs/streamcorpus_pipeline.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="right" >
+          <a href="yakonfig.html" title="4. yakonfig — global configuration management tools"
+             >next</a> |</li>
+        <li class="right" >
+          <a href="streamcorpus.html" title="2. streamcorpus — single-document data representation"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

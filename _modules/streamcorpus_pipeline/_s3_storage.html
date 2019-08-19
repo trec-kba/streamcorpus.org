@@ -1,0 +1,806 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._s3_storage &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._s3_storage</h1><div class="highlight"><pre>
+<span class="c">#!/usr/bin/env python</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Provides classes for loading chunk files from local storage and</span>
+<span class="sd">putting them out into local storage.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2014 Diffeo, Inc.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+<span class="kn">from</span> <span class="nn">cStringIO</span> <span class="kn">import</span> <span class="n">StringIO</span>
+<span class="kn">from</span> <span class="nn">functools</span> <span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">import</span> <span class="nn">gzip</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="kn">import</span> <span class="nn">requests</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">dossier.fc</span> <span class="kn">import</span> <span class="n">FeatureCollectionChunk</span> <span class="k">as</span> <span class="n">FCChunk</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+    <span class="n">FCChunk</span> <span class="o">=</span> <span class="bp">None</span>
+
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus</span> <span class="kn">import</span> <span class="n">decrypt_and_uncompress</span><span class="p">,</span> \
+    <span class="n">parse_file_extensions</span><span class="p">,</span> <span class="n">known_compression_schemes</span><span class="p">,</span> \
+    <span class="n">compress_and_encrypt_path</span><span class="p">,</span> <span class="n">Chunk</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._exceptions</span> <span class="kn">import</span> <span class="n">FailedExtraction</span><span class="p">,</span> \
+    <span class="n">FailedVerification</span><span class="p">,</span> <span class="n">ConfigurationError</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._get_name_info</span> <span class="kn">import</span> <span class="n">get_name_info</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._spinn3r_feed_storage</span> <span class="kn">import</span> <span class="n">_generate_stream_items</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._tarball_export</span> <span class="kn">import</span> <span class="n">tarball_export</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="n">_message_versions</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;v0_1_0&#39;</span><span class="p">:</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_1_0</span><span class="p">,</span>
+    <span class="s">&#39;v0_2_0&#39;</span><span class="p">:</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_2_0</span><span class="p">,</span>
+    <span class="s">&#39;v0_3_0&#39;</span><span class="p">:</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem_v0_3_0</span><span class="p">,</span>
+<span class="p">}</span>
+
+<span class="kn">import</span> <span class="nn">boto</span>
+<span class="kn">from</span> <span class="nn">boto.s3.key</span> <span class="kn">import</span> <span class="n">Key</span>
+<span class="kn">from</span> <span class="nn">boto.s3.connection</span> <span class="kn">import</span> <span class="n">S3Connection</span>
+<span class="c">## stop Boto&#39;s built-in retries, so we can do our own</span>
+<span class="k">if</span> <span class="ow">not</span> <span class="n">boto</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">has_section</span><span class="p">(</span><span class="s">&#39;Boto&#39;</span><span class="p">):</span>
+    <span class="n">boto</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">add_section</span><span class="p">(</span><span class="s">&#39;Boto&#39;</span><span class="p">)</span>
+<span class="n">boto</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="s">&#39;Boto&#39;</span><span class="p">,</span> <span class="s">&#39;num_retries&#39;</span><span class="p">,</span> <span class="s">&#39;0&#39;</span><span class="p">)</span>
+
+
+
+<span class="k">def</span> <span class="nf">_retry</span><span class="p">(</span><span class="n">func</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Decorator for methods that need many retries, because of</span>
+<span class="sd">    intermittent failures, such as AWS calls via boto, which has a</span>
+<span class="sd">    non-back-off retry.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">retry_func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="n">tries</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="k">while</span> <span class="bp">True</span><span class="p">:</span>
+            <span class="c"># If a handler allows execution to continue, then</span>
+            <span class="c"># fall through and do a back-off retry.</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+                <span class="k">break</span>
+            <span class="k">except</span> <span class="ne">OSError</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="c">## OSError: [Errno 24] Too many open files</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;assuming OSError unrecoverable&#39;</span><span class="p">)</span>
+                <span class="k">raise</span>
+            <span class="k">except</span> <span class="n">FailedExtraction</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="c">## pass through exc to caller</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;FAIL(</span><span class="si">%d</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">tries</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">raise</span>
+            <span class="k">except</span> <span class="n">FailedVerification</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;FAIL(</span><span class="si">%d</span><span class="s">)&#39;</span><span class="p">,</span> <span class="n">tries</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">tries</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tries&#39;</span><span class="p">]:</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;suppress_failures&#39;</span><span class="p">):</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;suppressing failure and breaking out of this loop; data may be corrupt, downstream will have to cope&#39;</span><span class="p">)</span>
+                        <span class="k">break</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="k">raise</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;FAIL(</span><span class="si">%d</span><span class="s">): having I/O trouble with S3&#39;</span><span class="p">,</span> <span class="n">tries</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">tries</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tries&#39;</span><span class="p">]:</span>
+                    <span class="k">raise</span>
+
+            <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;RETRYING (</span><span class="si">%d</span><span class="s"> left)&#39;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tries&#39;</span><span class="p">]</span> <span class="o">-</span> <span class="n">tries</span><span class="p">)</span>
+            <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">3</span> <span class="o">*</span> <span class="n">tries</span><span class="p">)</span>
+            <span class="n">tries</span> <span class="o">+=</span> <span class="mi">1</span>
+
+    <span class="k">return</span> <span class="n">retry_func</span>
+
+
+<span class="k">def</span> <span class="nf">timedop</span><span class="p">(</span><span class="n">what</span><span class="p">,</span> <span class="n">datalen</span><span class="p">,</span> <span class="n">fun</span><span class="p">):</span>
+    <span class="n">start_time</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">retval</span> <span class="o">=</span> <span class="n">fun</span><span class="p">()</span>
+    <span class="k">except</span><span class="p">:</span>
+        <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+        <span class="k">if</span> <span class="n">elapsed</span>  <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> </span><span class="si">%.1f</span><span class="s"> bytes/second ERROR&#39;</span><span class="p">,</span> <span class="n">what</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">datalen</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="n">elapsed</span><span class="p">),</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+        <span class="k">raise</span>
+
+    <span class="n">elapsed</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="n">start_time</span>
+    <span class="k">if</span> <span class="n">elapsed</span>  <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> </span><span class="si">%.1f</span><span class="s"> bytes/second&#39;</span><span class="p">,</span> <span class="n">what</span><span class="p">,</span> <span class="nb">float</span><span class="p">(</span><span class="n">datalen</span><span class="p">)</span> <span class="o">/</span> <span class="nb">float</span><span class="p">(</span><span class="n">elapsed</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">retval</span>
+
+
+<span class="k">def</span> <span class="nf">verify_md5</span><span class="p">(</span><span class="n">md5_expected</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">other_errors</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+    <span class="s">&quot;return True if okay, raise Exception if not&quot;</span>  <span class="c"># O_o ?</span>
+    <span class="n">md5_recv</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">md5</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">md5_expected</span> <span class="o">!=</span> <span class="n">md5_recv</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">other_errors</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">other_errors</span><span class="p">))</span>
+        <span class="k">raise</span> <span class="n">FailedVerification</span><span class="p">(</span><span class="s">&#39;original md5 = </span><span class="si">%r</span><span class="s"> != </span><span class="si">%r</span><span class="s"> = received md5&#39;</span> \
+                                 <span class="o">%</span> <span class="p">(</span><span class="n">md5_expected</span><span class="p">,</span> <span class="n">md5_recv</span><span class="p">))</span>
+    <span class="k">return</span> <span class="bp">True</span>
+
+
+<span class="k">def</span> <span class="nf">get_bucket</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">bucket_name</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;This function is mostly about managing configuration, and then</span>
+<span class="sd">    finally returns a boto.Bucket object.</span>
+
+<span class="sd">    AWS credentials come first from config keys</span>
+<span class="sd">    aws_access_key_id_path, aws_secret_access_key_path (paths to one</span>
+<span class="sd">    line files); secondly from environment variables</span>
+<span class="sd">    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">bucket_name</span><span class="p">:</span>
+        <span class="k">if</span> <span class="s">&#39;bucket&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">config</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span>
+                <span class="s">&#39;The &quot;bucket&quot; parameter is required for the s3 stages.&#39;</span><span class="p">)</span>
+        <span class="n">bucket_name</span> <span class="o">=</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;bucket&#39;</span><span class="p">]</span>
+
+    <span class="c"># get AWS credentials. first, from config; else, from env vars.</span>
+    <span class="n">aws_access_key_id_path</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;aws_access_key_id_path&#39;</span><span class="p">)</span>
+    <span class="n">aws_secret_access_key_path</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;aws_secret_access_key_path&#39;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">aws_access_key_id_path</span><span class="p">)</span> <span class="ow">and</span> <span class="p">(</span><span class="ow">not</span> <span class="n">aws_secret_access_key_path</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;using aws credentials from environment&#39;</span><span class="p">)</span>
+        <span class="n">access</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;AWS_ACCESS_KEY_ID&#39;</span><span class="p">)</span>
+        <span class="n">secret</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">getenv</span><span class="p">(</span><span class="s">&#39;AWS_SECRET_ACCESS_KEY&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="p">(</span><span class="ow">not</span> <span class="n">access</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="ow">not</span> <span class="n">secret</span><span class="p">):</span>
+            <span class="n">msg</span> <span class="o">=</span> <span class="s">&#39;aws credentials not configured in aws_access_key_id_path+aws_secret_access_key_path, and not available in environment AWS_ACCESS_KEY_ID+AWS_SECRET_ACCESS_KEY&#39;</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">access</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">aws_access_key_id_path</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+            <span class="n">secret</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">aws_secret_access_key_path</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;failed reading aws credentials from configured file&#39;</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="k">raise</span>
+
+    <span class="n">conn</span> <span class="o">=</span> <span class="n">S3Connection</span><span class="p">(</span><span class="n">access</span><span class="p">,</span> <span class="n">secret</span><span class="p">)</span>
+    <span class="n">bucket</span> <span class="o">=</span> <span class="n">conn</span><span class="o">.</span><span class="n">get_bucket</span><span class="p">(</span><span class="n">bucket_name</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">bucket</span>
+
+
+<div class="viewcode-block" id="from_s3_chunks"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._s3_storage.from_s3_chunks">[docs]</a><span class="k">class</span> <span class="nc">from_s3_chunks</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Reads data from Amazon S3 one key at a time. The type of data read</span>
+<span class="sd">    can be specified with the ``input_format`` config option. The</span>
+<span class="sd">    following values are legal: ``streamitem``, ``featurecollection``</span>
+<span class="sd">    or ``spinn3r``.</span>
+
+<span class="sd">    When the input format is ``streamitem`` or ``spinn3r``, then this</span>
+<span class="sd">    reader produces a generator of :class:`streamcorpus.StreamItem`</span>
+<span class="sd">    instances.</span>
+
+<span class="sd">    When the input format is ``featurecollection``, then this reader</span>
+<span class="sd">    produces a generator of ``dossier.fc.FeatureCollection`` instances.</span>
+
+<span class="sd">    ``bucket`` is the s3 bucket to use if input paths are not full</span>
+<span class="sd">    s3://{bucket}{path} URIs. ``aws_access_key_id_path`` and</span>
+<span class="sd">    ``aws_secret_access_key_path`` should point to files containing</span>
+<span class="sd">    your s3 credentials. Alternatley credentials can be in environment</span>
+<span class="sd">    variables ```AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY``</span>
+
+<span class="sd">    The rest of the configuration options are optional and are described</span>
+<span class="sd">    in the following example:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        from_s3_chunks:</span>
+<span class="sd">          # How to connect to S3</span>
+<span class="sd">          # bucket can also come from input path if full uri s3://{bucket}{path}</span>
+<span class="sd">          bucket: aws-publicdatasets</span>
+<span class="sd">          # can also come from environment variable AWS_ACCESS_KEY_ID</span>
+<span class="sd">          aws_access_key_id_path: keys/aws_access_key_id</span>
+<span class="sd">          # can also come from environment variable AWS_SECRET_ACCESS_KEY</span>
+<span class="sd">          aws_secret_access_key_path: keys/aws_secret_access_key</span>
+
+<span class="sd">          # Optional parameters.</span>
+<span class="sd">          </span>
+<span class="sd">          # The number of times to try reading from s3. A value of</span>
+<span class="sd">          # `1` means the download is tried exactly once.</span>
+<span class="sd">          # The default value is `10`.</span>
+<span class="sd">          tries: 1</span>
+
+<span class="sd">          # This is prepended to every key given. Namely, all s3 URLs</span>
+<span class="sd">          # are formed by `s3://{bucket}/{s3_path_prefix}/{input-key-name}`.</span>
+<span class="sd">          # By default, it is empty.</span>
+<span class="sd">          s3_path_prefix: some/s3/prefix</span>
+
+<span class="sd">          # A path to a private GPG decryption key file.</span>
+<span class="sd">          gpg_decryption_key_path: keys/gpg-key</span>
+
+<span class="sd">          # The type of data to read from s3. Valid values are</span>
+<span class="sd">          # &quot;StreamItem&quot;, &quot;spinn3r&quot; or &quot;FeatureCollection&quot;.</span>
+<span class="sd">          # The default is &quot;StreamItem&quot;.</span>
+<span class="sd">          input_format: StreamItem</span>
+
+<span class="sd">          # When the input format is &quot;StreamItem&quot;, this indicates the</span>
+<span class="sd">          # Thrift version to use. Defaults to &quot;v0_3_0&quot;.</span>
+<span class="sd">          streamcorpus_version: v0_3_0</span>
+
+<span class="sd">          # When set, an md5 is extracted from the s3 key and is used</span>
+<span class="sd">          # to verify the decrypted and decompressed content downloaded.</span>
+<span class="sd">          # This is disabled by default.</span>
+<span class="sd">          compare_md5_in_file_name: true</span>
+
+<span class="sd">          # A temporary directory where intermediate files may reside.</span>
+<span class="sd">          # Uses your system&#39;s default tmp directory (usually `/tmp`)</span>
+<span class="sd">          # by default.</span>
+<span class="sd">          tmp_dir_path: /tmp</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;from_s3_chunks&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;compare_md5_in_file_name&#39;</span><span class="p">:</span> <span class="bp">False</span><span class="p">,</span>
+        <span class="s">&#39;s3_path_prefix&#39;</span><span class="p">:</span> <span class="s">&#39;&#39;</span><span class="p">,</span>
+        <span class="s">&#39;tmp_dir_path&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+        <span class="s">&#39;tries&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="s">&#39;gpg_decryption_key_path&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+        <span class="s">&#39;input_format&#39;</span><span class="p">:</span> <span class="s">&#39;StreamItem&#39;</span><span class="p">,</span>
+        <span class="s">&#39;streamcorpus_version&#39;</span><span class="p">:</span> <span class="s">&#39;v0_3_0&#39;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">from_s3_chunks</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">gpg_decryption_key_path</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;gpg_decryption_key_path&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Takes a path suffix as a string over stdin and generates chunks from</span>
+<span class="sd">        s3://&lt;bucket&gt;&lt;s3_prefix_path&gt;/{i_str}.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">i_str</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s">&#39;s3://&#39;</span><span class="p">):</span>
+            <span class="c"># full path including bucket name</span>
+            <span class="n">bucket_name</span><span class="p">,</span> <span class="n">kpath</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[</span><span class="mi">5</span><span class="p">:]</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;/&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+            <span class="k">assert</span> <span class="n">bucket_name</span> <span class="ow">and</span> <span class="n">kpath</span><span class="p">,</span> <span class="s">&#39;bad s3 url {0!r}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c"># get bucket_name from config</span>
+            <span class="n">bucket_name</span> <span class="o">=</span> <span class="bp">None</span>
+            <span class="n">kpath</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;s3_path_prefix&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">strip</span><span class="p">(),</span>
+                                 <span class="n">i_str</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;from_s3_chunks: </span><span class="si">%s</span><span class="s"> / </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">bucket_name</span><span class="p">,</span> <span class="n">kpath</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_chunk</span><span class="p">(</span><span class="n">bucket_name</span><span class="p">,</span> <span class="n">kpath</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_decode</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Given the raw data from s3, return a generator for the items</span>
+<span class="sd">        contained in that data. A generator is necessary to support</span>
+<span class="sd">        chunk files, but non-chunk files can be provided by a generator</span>
+<span class="sd">        that yields exactly one item.</span>
+
+<span class="sd">        Decoding works by case analysis on the config option</span>
+<span class="sd">        ``input_format``. If an invalid ``input_format`` is given, then</span>
+<span class="sd">        a ``ConfigurationError`` is raised.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">informat</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;input_format&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">informat</span> <span class="o">==</span> <span class="s">&#39;spinn3r&#39;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">_generate_stream_items</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">informat</span> <span class="o">==</span> <span class="s">&#39;streamitem&#39;</span><span class="p">:</span>
+            <span class="n">ver</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;streamcorpus_version&#39;</span><span class="p">]</span>
+            <span class="k">if</span> <span class="n">ver</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_message_versions</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span>
+                    <span class="s">&#39;Not a valid streamcorpus version: </span><span class="si">%s</span><span class="s"> &#39;</span>
+                    <span class="s">&#39;(choose from: </span><span class="si">%s</span><span class="s">)&#39;</span>
+                    <span class="o">%</span> <span class="p">(</span><span class="n">ver</span><span class="p">,</span> <span class="s">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_message_versions</span><span class="o">.</span><span class="n">keys</span><span class="p">())))</span>
+
+            <span class="n">message</span> <span class="o">=</span> <span class="n">_message_versions</span><span class="p">[</span><span class="n">ver</span><span class="p">]</span>
+            <span class="k">return</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">,</span> <span class="n">message</span><span class="o">=</span><span class="n">message</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">informat</span> <span class="o">==</span> <span class="s">&#39;featurecollection&#39;</span> <span class="ow">and</span> <span class="n">FCChunk</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">FCChunk</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span>
+                <span class="s">&#39;from_s3_chunks unknown input_format = </span><span class="si">%r</span><span class="s">&#39;</span>
+                <span class="o">%</span> <span class="n">informat</span><span class="p">)</span>
+
+    <span class="nd">@_retry</span>
+    <span class="k">def</span> <span class="nf">get_chunk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">bucket_name</span><span class="p">,</span> <span class="n">key_path</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;return Chunk object full of records</span>
+<span class="sd">        bucket_name may be None&#39;&#39;&#39;</span>
+        <span class="n">bucket</span> <span class="o">=</span> <span class="n">get_bucket</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">bucket_name</span><span class="o">=</span><span class="n">bucket_name</span><span class="p">)</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">bucket</span><span class="o">.</span><span class="n">get_key</span><span class="p">(</span><span class="n">key_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">key</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">FailedExtraction</span><span class="p">(</span><span class="s">&#39;Key &quot;</span><span class="si">%s</span><span class="s">&quot; does not exist.&#39;</span> <span class="o">%</span> <span class="n">key_path</span><span class="p">)</span>
+
+        <span class="n">fh</span> <span class="o">=</span> <span class="n">StringIO</span><span class="p">()</span>
+        <span class="n">key</span><span class="o">.</span><span class="n">get_contents_to_file</span><span class="p">(</span><span class="n">fh</span><span class="p">)</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">fh</span><span class="o">.</span><span class="n">getvalue</span><span class="p">()</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">FailedExtraction</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s">: no data (does the key exist?)&#39;</span>
+                                   <span class="o">%</span> <span class="n">key</span><span class="o">.</span><span class="n">key</span><span class="p">)</span>
+
+        <span class="n">chunk_type</span><span class="p">,</span> <span class="n">compression</span><span class="p">,</span> <span class="n">encryption</span> <span class="o">=</span> <span class="n">parse_file_extensions</span><span class="p">(</span><span class="n">key_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">encryption</span> <span class="o">==</span> <span class="s">&#39;gpg&#39;</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">gpg_decryption_key_path</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">FailedExtraction</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> ends with &quot;.gpg&quot; but gpg_decryption_key_path=</span><span class="si">%s</span><span class="s">&#39;</span>
+                                       <span class="o">%</span> <span class="p">(</span><span class="n">key</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">gpg_decryption_key_path</span><span class="p">))</span>
+
+        <span class="n">_errors</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">if</span> <span class="n">compression</span> <span class="ow">or</span> <span class="n">encryption</span><span class="p">:</span>
+            <span class="n">_errors</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">decrypt_and_uncompress</span><span class="p">(</span>
+                <span class="n">data</span><span class="p">,</span> 
+                <span class="bp">self</span><span class="o">.</span><span class="n">gpg_decryption_key_path</span><span class="p">,</span>
+                <span class="n">tmp_dir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">),</span>
+                <span class="n">compression</span><span class="o">=</span><span class="n">compression</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="p">:</span>
+                <span class="n">msg</span> <span class="o">=</span> <span class="s">&#39;decrypt_and_uncompress got no data for {0!r}, from {1} bytes&#39;</span> \
+                    <span class="o">+</span> <span class="s">&#39; downloaded, errors: {2}&#39;</span> \
+                        <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">key_path</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="p">),</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_errors</span><span class="p">))</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+                <span class="k">raise</span> <span class="n">FailedExtraction</span><span class="p">(</span><span class="n">msg</span><span class="p">)</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">_errors</span><span class="p">)</span> <span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;compare_md5_in_file_name&#39;</span><span class="p">]:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;not checking md5 in file name, consider setting &#39;</span>
+                        <span class="s">&#39;from_s3_chunks:compare_md5_in_file_name&#39;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;Verifying md5 for &quot;</span><span class="si">%s</span><span class="s">&quot;...&#39;</span> <span class="o">%</span> <span class="n">key</span><span class="o">.</span><span class="n">key</span><span class="p">)</span>
+
+            <span class="c"># The regex hammer.</span>
+            <span class="n">m</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">search</span><span class="p">(</span><span class="s">&#39;([a-z0-9]{32})(?:\.|$)&#39;</span><span class="p">,</span> <span class="n">key</span><span class="o">.</span><span class="n">key</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">m</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">FailedExtraction</span><span class="p">(</span>
+                    <span class="s">&#39;Could not extract md5 from key &quot;</span><span class="si">%s</span><span class="s">&quot;. &#39;</span>
+                    <span class="s">&#39;Perhaps you should disable compare_md5_in_file_name?&#39;</span>
+                    <span class="o">%</span> <span class="n">key</span><span class="o">.</span><span class="n">key</span><span class="p">)</span>
+
+            <span class="n">i_content_md5</span> <span class="o">=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+            <span class="c">#import pdb; pdb.set_trace()</span>
+            <span class="n">verify_md5</span><span class="p">(</span><span class="n">i_content_md5</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">other_errors</span><span class="o">=</span><span class="n">_errors</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_decode</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+</div>
+<div class="viewcode-block" id="to_s3_chunks"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._s3_storage.to_s3_chunks">[docs]</a><span class="k">class</span> <span class="nc">to_s3_chunks</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Copies chunk files on disk to Amazon S3. The type of data written</span>
+<span class="sd">    can be specified with the ``output_format`` config option. The</span>
+<span class="sd">    following values are legal: ``streamitem`` and ``featurecollection``.</span>
+<span class="sd">    </span>
+<span class="sd">    N.B. The format is only necessary for construction the</span>
+<span class="sd">    ``output_name``. The format is also used to pick between an ``fc``</span>
+<span class="sd">    (for feature collections) extension and a ``sc`` (for stream items)</span>
+<span class="sd">    extension.</span>
+
+<span class="sd">    The following configuration options are mandatory:</span>
+<span class="sd">    ``bucket`` is the s3 bucket to use. ``aws_access_key_id_path``</span>
+<span class="sd">    and ``aws_secret_access_key_path`` should point to files</span>
+<span class="sd">    containing your s3 credentials.</span>
+
+<span class="sd">    ``output_name`` is also required and is expanded in the same way as</span>
+<span class="sd">    the :class:`~streamcorpus_pipeline._local_storage.to_local_chunks`</span>
+<span class="sd">    writer.  The filename always has ``.{sc,fc}.{xz,gz,sz}`` appended to it</span>
+<span class="sd">    (depending on the output format specified), and correspondingly,</span>
+<span class="sd">    the output file is always compressed.  If GPG keys are provided,</span>
+<span class="sd">    then ``.gpg`` is appended and the file is encrypted.</span>
+
+<span class="sd">    The rest of the configuration options are optional and are</span>
+<span class="sd">    described in the following example:</span>
+<span class="sd">    </span>
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        to_s3_chunks:</span>
+<span class="sd">          # Mandatory</span>
+<span class="sd">          bucket: aws-publicdatasets</span>
+<span class="sd">          aws_access_key_id_path: keys/aws_access_key_id</span>
+<span class="sd">          aws_secret_access_key_path: keys/aws_secret_access_key</span>
+<span class="sd">          output_name: &quot;%(date_hour)s/%(source)s-%(num)d-%(input_fname)s-%(md5)s&quot;</span>
+
+<span class="sd">          # Optional parameters.</span>
+
+<span class="sd">          # The number of times to try writing to s3. A value of</span>
+<span class="sd">          # `1` means the upload is tried exactly once.</span>
+<span class="sd">          # The default value is `10`.</span>
+<span class="sd">          # (This also applies to the verification step.)</span>
+<span class="sd">          tries: 1</span>
+
+<span class="sd">          # When set, the file uploaded will be private.</span>
+<span class="sd">          # Default: false</span>
+<span class="sd">          is_private: false</span>
+
+<span class="sd">          # When set, the file will be re-downloaded from Amazon, decrypted,</span>
+<span class="sd">          # decompressed and checksummed against the data sent to Amazon.</span>
+<span class="sd">          # (This used to be &quot;verify_via_http&quot;, but this more broadly named</span>
+<span class="sd">          # option applies even when &quot;is_private&quot; is true.)</span>
+<span class="sd">          #</span>
+<span class="sd">          # Default: true</span>
+<span class="sd">          verify: true</span>
+
+<span class="sd">          # If verification fails `tries` times, then the default</span>
+<span class="sd">          # behavior is to exit, which can cause a rejester</span>
+<span class="sd">          # fork_worker parent to retry the whole job.</span>
+<span class="sd">          #</span>
+<span class="sd">          # Default: false</span>
+<span class="sd">          suppress_failures: false</span>
+
+<span class="sd">          # This is prepended to every key given. Namely, all s3 URLs</span>
+<span class="sd">          # are formed by `s3://{bucket}/{s3_path_prefix}/{input-key-name}`.</span>
+<span class="sd">          # By default, it is empty.</span>
+<span class="sd">          s3_path_prefix: some/s3/prefix</span>
+
+<span class="sd">          # Paths to GPG keys. Note that if you&#39;re using verification,</span>
+<span class="sd">          # then a decryption key must be given.</span>
+<span class="sd">          # Default values: None</span>
+<span class="sd">          gpg_encryption_key_path: keys/gpg-key.pub</span>
+<span class="sd">          gpg_decryption_key_path: keys/gpg-key.private</span>
+
+<span class="sd">          # GPG recipient.</span>
+<span class="sd">          # Default value: trec-kba</span>
+<span class="sd">          gpg_recipient: trec-kba</span>
+
+<span class="sd">          # Removes the intermediate chunk file from disk.</span>
+<span class="sd">          # Default: true.</span>
+<span class="sd">          cleanup_tmp_files: true</span>
+
+<span class="sd">          # A temporary directory where intermediate files may reside.</span>
+<span class="sd">          # Uses your system&#39;s default tmp directory (usually `/tmp`)</span>
+<span class="sd">          # by default.</span>
+<span class="sd">          tmp_dir_path: /tmp</span>
+
+<span class="sd">          # Change compression scheme; default is .xz for greatest</span>
+<span class="sd">          # compression of archival content (S3 charges by the byte).</span>
+<span class="sd">          # xz is also the slowest, so other options can make more</span>
+<span class="sd">          # sense in some applications.  Snappy (.sz) is the fastest</span>
+<span class="sd">          # and still much better than no compression at all.  Choices</span>
+<span class="sd">          # are &quot;xz&quot;, &quot;sz&quot;, &quot;gz&quot;, &quot;&quot;</span>
+<span class="sd">          compression: xz</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;to_s3_chunks&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;s3_path_prefix&#39;</span><span class="p">:</span> <span class="s">&#39;&#39;</span><span class="p">,</span>
+        <span class="s">&#39;tries&#39;</span><span class="p">:</span> <span class="mi">10</span><span class="p">,</span>
+        <span class="s">&#39;gpg_encryption_key_path&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+        <span class="s">&#39;gpg_decryption_key_path&#39;</span><span class="p">:</span> <span class="bp">None</span><span class="p">,</span>
+        <span class="s">&#39;gpg_recipient&#39;</span><span class="p">:</span> <span class="s">&#39;trec-kba&#39;</span><span class="p">,</span>
+        <span class="s">&#39;verify&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+        <span class="s">&#39;suppress_failures&#39;</span><span class="p">:</span> <span class="bp">False</span><span class="p">,</span>
+        <span class="s">&#39;is_private&#39;</span><span class="p">:</span> <span class="bp">False</span><span class="p">,</span>
+        <span class="s">&#39;output_format&#39;</span><span class="p">:</span> <span class="s">&#39;StreamItem&#39;</span><span class="p">,</span>
+        <span class="s">&#39;tmp_dir_path&#39;</span><span class="p">:</span> <span class="s">&#39;/tmp&#39;</span><span class="p">,</span>
+        <span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+        <span class="s">&#39;compression&#39;</span><span class="p">:</span> <span class="s">&#39;xz&#39;</span><span class="p">,</span>
+        <span class="c"># require: bucket, output_name, aws_access_key_id_path,</span>
+        <span class="c">#          aws_secret_access_key_path</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">to_s3_chunks</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+
+        <span class="c">## TODO: use something like verify_config</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">compression</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">known_compression_schemes</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;to_s3_chunks &quot;compression: </span><span class="si">%r</span><span class="s">&quot; not in </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">compression</span><span class="p">,</span> <span class="n">known_compression_schemes</span><span class="p">))</span>
+
+        <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;compression: </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;compression&#39;</span><span class="p">))</span>
+
+        <span class="c"># Backwards compatibility.</span>
+        <span class="k">if</span> <span class="s">&#39;verify_via_http&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&#39;Update your config! Use &quot;verify&quot; instead of &#39;</span>
+                           <span class="s">&#39;&quot;verify_via_http&quot;. The latter is deprecated.&#39;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;verify&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s">&#39;verify_via_http&#39;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;verify&#39;</span><span class="p">]</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;is_private&#39;</span><span class="p">]:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s">&#39;Nonsensical config &quot;verify_via_http=true&quot; and &#39;</span>
+                               <span class="s">&#39;&quot;is_private=true&quot;. Will verify with boto.&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">bucket</span> <span class="o">=</span> <span class="n">get_bucket</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Load chunk from t_path and put it into the right place in s3</span>
+<span class="sd">        using the output_name template from the config</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;to_s3_chunks.call(t_path=</span><span class="si">%r</span><span class="s">, name_info=</span><span class="si">%r</span><span class="s">, i_str=</span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span>
+                    <span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">,</span> <span class="n">i_str</span><span class="p">)</span>
+        <span class="c"># Getting name info actually assembles an entire chunk in memory</span>
+        <span class="c"># from `t_path`, so we now need to tell it which chunk type to use.</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">more_name_info</span> <span class="o">=</span> <span class="n">get_name_info</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">i_str</span><span class="o">=</span><span class="n">i_str</span><span class="p">,</span>
+                                           <span class="n">chunk_type</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">chunk_type</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;failed get_name_info(</span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="k">raise</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">name_info</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">name_info</span><span class="p">,</span> <span class="o">**</span><span class="n">more_name_info</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">name_info</span><span class="p">[</span><span class="s">&#39;num&#39;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="n">o_path</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">s3key_name</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s">: </span><span class="se">\n\t</span><span class="si">%r</span><span class="se">\n\t</span><span class="s">from: </span><span class="si">%r</span><span class="se">\n\t</span><span class="s">by way of </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">__class__</span><span class="o">.</span><span class="n">__name__</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">t_path</span><span class="p">)</span>
+
+        <span class="n">t_path2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">prepare_on_disk</span><span class="p">(</span><span class="n">t_path</span><span class="p">)</span>
+        <span class="n">data_len</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">getsize</span><span class="p">(</span><span class="n">t_path2</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">data_len</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;data is now zero bytes!&#39;</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;prepared </span><span class="si">%s</span><span class="s"> bytes of </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">data_len</span><span class="p">,</span> <span class="n">t_path2</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">put_data</span><span class="p">(</span><span class="n">o_path</span><span class="p">,</span> <span class="n">t_path2</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">name_info</span><span class="p">[</span><span class="s">&#39;md5&#39;</span><span class="p">],</span> <span class="n">data_len</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">cleanup</span><span class="p">(</span><span class="n">t_path</span><span class="p">,</span> <span class="n">t_path2</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> finished:</span><span class="se">\n\t</span><span class="s"> input: </span><span class="si">%s</span><span class="se">\n\t</span><span class="s">output: </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">__class__</span><span class="o">.</span><span class="n">__name__</span><span class="p">,</span> <span class="n">i_str</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">o_path</span><span class="p">]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">outfmt</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_format&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">compression</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;compression&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">chunk_type</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">outfmt</span> <span class="o">==</span> <span class="s">&#39;featurecollection&#39;</span> <span class="ow">and</span> <span class="n">FCChunk</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;verify&#39;</span><span class="p">):</span>
+                <span class="k">return</span> <span class="n">partial</span><span class="p">(</span><span class="n">FCChunk</span><span class="p">,</span> <span class="n">inline_md5</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">FCChunk</span>
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">outfmt</span> <span class="o">==</span> <span class="s">&#39;streamitem&#39;</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span>
+                <span class="s">&#39;Invalid output format: &quot;</span><span class="si">%s</span><span class="s">&quot;. Choose one of StreamItem &#39;</span>
+                <span class="s">&#39;or FeatureCollection.&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_format&#39;</span><span class="p">])</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">s3key_name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">o_fname</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_name&#39;</span><span class="p">]</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">name_info</span>
+        <span class="n">ext</span> <span class="o">=</span> <span class="s">&#39;fc&#39;</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">outfmt</span> <span class="o">==</span> <span class="s">&#39;featurecollection&#39;</span> <span class="k">else</span> <span class="s">&#39;sc&#39;</span>
+        <span class="n">o_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;s3_path_prefix&#39;</span><span class="p">],</span>
+                              <span class="s">&#39;</span><span class="si">%s</span><span class="s">.</span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">o_fname</span><span class="p">,</span> <span class="n">ext</span><span class="p">))</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">compression</span><span class="p">:</span>
+            <span class="n">o_path</span> <span class="o">+=</span> <span class="s">&#39;.&#39;</span> <span class="o">+</span> <span class="bp">self</span><span class="o">.</span><span class="n">compression</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;gpg_encryption_key_path&#39;</span><span class="p">)</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">o_path</span> <span class="o">+=</span> <span class="s">&#39;.gpg&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name_info</span><span class="p">[</span><span class="s">&#39;s3_output_path&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">o_path</span>
+        <span class="k">return</span> <span class="n">o_path</span>
+
+    <span class="k">def</span> <span class="nf">prepare_on_disk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">):</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;gpg_encryption_key_path: </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;gpg_encryption_key_path&#39;</span><span class="p">))</span>
+        <span class="n">_errors</span><span class="p">,</span> <span class="n">t_path2</span> <span class="o">=</span> <span class="n">compress_and_encrypt_path</span><span class="p">(</span>
+            <span class="n">t_path</span><span class="p">,</span> 
+            <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;gpg_encryption_key_path&#39;</span><span class="p">),</span>
+            <span class="n">gpg_recipient</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;gpg_recipient&#39;</span><span class="p">],</span>
+            <span class="n">tmp_dir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">),</span>
+            <span class="n">compression</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;compression&#39;</span><span class="p">),</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">_errors</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;compress and encrypt errors: </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">_errors</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">t_path2</span>
+
+    <span class="k">def</span> <span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">files</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;cleanup_tmp_files&#39;</span><span class="p">]:</span>
+            <span class="k">return</span>
+        <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">files</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;</span><span class="si">%s</span><span class="s"> --&gt; failed to remove </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">exc</span><span class="p">,</span> <span class="n">f</span><span class="p">))</span>
+
+    <span class="nd">@_retry</span>
+    <span class="k">def</span> <span class="nf">put_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key_path</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">md5</span><span class="p">,</span> <span class="n">data_len</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="n">timedop</span><span class="p">(</span><span class="s">&#39;s3 put&#39;</span><span class="p">,</span> <span class="n">data_len</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">key_path</span><span class="p">,</span> <span class="n">t_path</span><span class="p">))</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;verify&#39;</span><span class="p">]:</span>
+            <span class="n">ok</span> <span class="o">=</span> <span class="n">timedop</span><span class="p">(</span><span class="s">&#39;s3 verify&#39;</span><span class="p">,</span> <span class="n">data_len</span><span class="p">,</span> <span class="k">lambda</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">verify</span><span class="p">(</span><span class="n">key_path</span><span class="p">,</span> <span class="n">md5</span><span class="p">))</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">ok</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">Exception</span><span class="p">(</span><span class="s">&#39;verify failed putting {0!r}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">key_path</span><span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">put</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">t_path</span><span class="p">):</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">Key</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">bucket</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+        <span class="n">key</span><span class="o">.</span><span class="n">set_contents_from_filename</span><span class="p">(</span><span class="n">t_path</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;is_private&#39;</span><span class="p">,</span> <span class="bp">False</span><span class="p">):</span>
+            <span class="c"># Makes the file have a public URL.</span>
+            <span class="n">key</span><span class="o">.</span><span class="n">set_acl</span><span class="p">(</span><span class="s">&#39;public-read&#39;</span><span class="p">)</span>
+
+    <span class="nd">@_retry</span>
+    <span class="k">def</span> <span class="nf">verify</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">md5</span><span class="p">):</span>
+        <span class="n">chunk_format</span><span class="p">,</span> <span class="n">compression</span><span class="p">,</span> <span class="n">encryption</span> <span class="o">=</span> <span class="n">parse_file_extensions</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;verifying </span><span class="si">%s</span><span class="s"> --&gt; </span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">, </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">chunk_format</span><span class="p">,</span> <span class="n">compression</span><span class="p">,</span> <span class="n">encryption</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;gpg_encryption_key_path&#39;</span><span class="p">)</span> \
+                <span class="ow">and</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;gpg_decryption_key_path&#39;</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span>
+                <span class="s">&#39;When &quot;verify=true&quot; and &quot;gpg_encryption_key_path&quot; is set, &#39;</span>
+                <span class="s">&#39;&quot;gpg_decryption_key_path&quot; must also be set.&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;is_private&#39;</span><span class="p">,</span> <span class="bp">False</span><span class="p">):</span>
+            <span class="n">rawdata</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_data</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">rawdata</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">public_data</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">rawdata</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;got no data out of reading the data&#39;</span><span class="p">)</span>
+
+        <span class="n">errors</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">decrypt_and_uncompress</span><span class="p">(</span>
+            <span class="n">rawdata</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;gpg_decryption_key_path&#39;</span><span class="p">),</span>
+            <span class="n">tmp_dir</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;tmp_dir_path&#39;</span><span class="p">),</span>
+            <span class="n">compression</span><span class="o">=</span><span class="n">compression</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">data</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;got no data back from decrypt_and_uncompress </span><span class="si">%r</span><span class="s">, (size=</span><span class="si">%r</span><span class="s">), errors: </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">rawdata</span><span class="p">),</span> <span class="n">errors</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">False</span>
+
+        <span class="c">### Let&#39;s not use both belt and suspenders.  md5 is enough.</span>
+        <span class="c">### Of note, if this gets killed by something, e.g. rejester</span>
+        <span class="c">### fork_worker parent, then since this is one of the slowest</span>
+        <span class="c">### parts, you might see cbor getting killed, which can look</span>
+        <span class="c">### like this:</span>
+        <span class="c">##    &gt;&gt;&gt; c = list(f)</span>
+        <span class="c">##    ^CTraceback (most recent call last):</span>
+        <span class="c">##    File &quot;&lt;stdin&gt;&quot;, line 1, in &lt;module&gt;</span>
+        <span class="c">##    File &quot;/ebs/home/jrf/streamcorpus/py/src/streamcorpus/_chunk.py&quot;, line 381, in __iter__</span>
+        <span class="c">##    for msg in self.read_msg_impl():</span>
+        <span class="c">##    File &quot;/ebs/home/jrf/streamcorpus/py/src/streamcorpus/_cbor_chunk.py&quot;, line 111, in read_msg_impl</span>
+        <span class="c">##    ob = cbor.load(self._i_chunk_fh)</span>
+        <span class="c">##    RuntimeError: unknown error decoding TAG...</span>
+        <span class="c">#</span>
+        <span class="c">#try:</span>
+        <span class="c">#    count = len(list(self.chunk_type(data=data)))</span>
+        <span class="c">#except Exception, exc:</span>
+        <span class="c">#    count = None</span>
+        <span class="c">#    logger.critical(&#39;\n\n********\n\nfailure on %r\n\n********\n\n&#39;, o_path, exc_info=True)</span>
+        <span class="c">#logger.info(&#39;attempting verify of %r %r in %r&#39;, count, chunk_format, o_path)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;attempting verify of </span><span class="si">%r</span><span class="s"> in </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">chunk_format</span><span class="p">,</span> <span class="n">o_path</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">verify_md5</span><span class="p">(</span><span class="n">md5</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">other_errors</span><span class="o">=</span><span class="n">errors</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">public_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o_path</span><span class="p">):</span>
+        <span class="n">url</span> <span class="o">=</span> <span class="s">&#39;http://s3.amazonaws.com/</span><span class="si">%(bucket)s</span><span class="s">/</span><span class="si">%(o_path)s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">{</span>
+            <span class="s">&#39;bucket&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;bucket&#39;</span><span class="p">],</span>
+            <span class="s">&#39;o_path&#39;</span><span class="p">:</span> <span class="n">o_path</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;public fetching </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">requests</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">url</span><span class="p">)</span><span class="o">.</span><span class="n">content</span>
+
+    <span class="k">def</span> <span class="nf">private_data</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o_path</span><span class="p">):</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">bucket</span><span class="o">.</span><span class="n">get_key</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span><span class="o">.</span><span class="n">get_contents_as_string</span><span class="p">()</span>
+
+</div>
+<div class="viewcode-block" id="to_s3_tarballs"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._s3_storage.to_s3_tarballs">[docs]</a><span class="k">class</span> <span class="nc">to_s3_tarballs</span><span class="p">(</span><span class="n">to_s3_chunks</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    The same as :class:`streamcorpus_pipeline._s3_storage.to_s3_chunks`,</span>
+<span class="sd">    except it puts stream items into a gzipped tarball instead of</span>
+<span class="sd">    chunks. This writer does not do any encryption.</span>
+
+<span class="sd">    In addition to the required parameters for ``to_s3_chunks``, this</span>
+<span class="sd">    writer has three more required parameters: ``tarinfo_name`` (which</span>
+<span class="sd">    supports ``output_name`` substitution semantics), ``tarinfo_uname``</span>
+<span class="sd">    and ``tarinfo_gname``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;to_s3_tarballs&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">to_s3_tarballs</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_format&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">!=</span> <span class="s">&#39;streamitem&#39;</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">ConfigurationError</span><span class="p">(</span>
+                <span class="s">&#39;to_s3_tarballs only supports &quot;output_format=streamitem&quot;, &#39;</span>
+                <span class="s">&#39;but given &quot;output_format=</span><span class="si">%s</span><span class="s">&quot;&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_format&#39;</span><span class="p">])</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span> <span class="nf">s3key_name</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">o_fname</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;output_name&#39;</span><span class="p">]</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">name_info</span>
+        <span class="k">return</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;s3_path_prefix&#39;</span><span class="p">],</span> <span class="n">o_fname</span> <span class="o">+</span> <span class="s">&#39;.tar.gz&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">prepare_on_disk</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">):</span>
+        <span class="n">t_path2</span> <span class="o">=</span> <span class="n">tarball_export</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">name_info</span><span class="p">)</span>
+        <span class="c"># Cheat a bit here. We are checking the md5 of the full compressed</span>
+        <span class="c"># archive instead of the decompressed/decrypted chunk (because this is</span>
+        <span class="c"># a tarball, not a chunk).</span>
+        <span class="c"># TODO: if md5 is actually needed, read the file and calculate it</span>
+        <span class="c">#self.name_info[&#39;md5&#39;] = hashlib.md5(data).hexdigest()</span>
+        <span class="k">return</span> <span class="n">t_path2</span>
+
+    <span class="nd">@_retry</span>
+    <span class="k">def</span> <span class="nf">redownload_verify</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">md5</span><span class="p">):</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="n">Key</span><span class="p">(</span><span class="n">get_bucket</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">),</span> <span class="n">o_path</span><span class="p">)</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">key</span><span class="o">.</span><span class="n">get_contents_as_string</span><span class="p">()</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span> <span class="s">&#39;got back SIs: </span><span class="si">%d</span><span class="s">&#39;</span> <span class="o">%</span> <span class="nb">len</span><span class="p">(</span> <span class="nb">list</span><span class="p">(</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="n">data</span><span class="p">)</span> <span class="p">)</span> <span class="p">))</span>
+        <span class="k">return</span> <span class="n">verify_md5</span><span class="p">(</span><span class="n">md5</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+
+    <span class="nd">@_retry</span>
+    <span class="k">def</span> <span class="nf">verify</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">o_path</span><span class="p">,</span> <span class="n">md5</span><span class="p">):</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;is_private&#39;</span><span class="p">,</span> <span class="bp">False</span><span class="p">):</span>
+            <span class="n">rawdata</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">private_data</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">rawdata</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">public_data</span><span class="p">(</span><span class="n">o_path</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">verify_md5</span><span class="p">(</span><span class="n">md5</span><span class="p">,</span> <span class="n">rawdata</span><span class="p">)</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

@@ -1,0 +1,367 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._clean_visible &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._clean_visible</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Simple HTML to plain text conversion.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2015 Diffeo, Inc.</span>
+
+<span class="sd">.. autoclass:: clean_visible</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">string</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.emails</span> <span class="kn">import</span> <span class="n">fix_emails</span>
+
+<span class="kn">import</span> <span class="nn">lxml.etree</span>
+
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._clean_html</span> <span class="kn">import</span> <span class="n">drop_invalid_and_upper_utf8_chars</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+<span class="kn">import</span> <span class="nn">yakonfig</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="c"># regex to identify all XML-like tags, including SCRIPT and STYLE tags</span>
+<span class="n">invisible</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="c"># capture the visible text before the invisible part</span>
+    <span class="sd">&#39;&#39;&#39;(?P&lt;before&gt;(.|\n)*?)&#39;&#39;&#39;</span>
+    <span class="c"># capture everything between SCRIPT and STYLE tags,</span>
+    <span class="sd">&#39;&#39;&#39;(?P&lt;invisible&gt;(&lt;script(.|\n)*?&lt;/script&gt;|&lt;style(.|\n)*?&lt;/style&gt;&#39;&#39;&#39;</span>
+    <span class="c"># and also everything inside of XML-like tags, even if it</span>
+    <span class="c"># contains newlines</span>
+    <span class="sd">&#39;&#39;&#39;|&lt;(.|\n)*?&gt;))&#39;&#39;&#39;</span><span class="p">,</span>
+    <span class="c"># ignore case</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">re_based_make_clean_visible</span><span class="p">(</span><span class="n">html</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Takes an HTML-like binary string as input and returns a binary</span>
+<span class="sd">    string of the same length with all tags replaced by whitespace.</span>
+<span class="sd">    This also detects script and style tags, and replaces the text</span>
+<span class="sd">    between them with whitespace.</span>
+
+<span class="sd">    Pre-existing whitespace of any kind (newlines, tabs) is converted</span>
+<span class="sd">    to single spaces &#39; &#39;, which has the same byte length (and</span>
+<span class="sd">    character length).</span>
+
+<span class="sd">    Note: this does not change any characters like &amp;rsquo; and &amp;nbsp;,</span>
+<span class="sd">    so taggers operating on this text must cope with such symbols.</span>
+<span class="sd">    Converting them to some other character would change their byte</span>
+<span class="sd">    length, even if equivalent from a character perspective.</span>
+
+<span class="sd">    This is regex based, which can occassionally just hang...</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">text</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+    <span class="c"># Fix emails</span>
+    <span class="n">html</span> <span class="o">=</span> <span class="n">fix_emails</span><span class="p">(</span><span class="n">html</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">invisible</span><span class="o">.</span><span class="n">finditer</span><span class="p">(</span><span class="n">html</span><span class="p">):</span>
+        <span class="n">text</span> <span class="o">+=</span> <span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;before&#39;</span><span class="p">)</span>
+        <span class="n">text</span> <span class="o">+=</span> <span class="s">&#39; &#39;</span> <span class="o">*</span> <span class="nb">len</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;invisible&#39;</span><span class="p">))</span>
+
+    <span class="c"># text better be &gt;= original</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">),</span> <span class="s">&#39;</span><span class="si">%d</span><span class="s"> !&gt;= </span><span class="si">%d</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
+
+    <span class="c"># capture any characters after the last tag... such as newlines</span>
+    <span class="n">tail</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">)</span> <span class="o">-</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+    <span class="n">text</span> <span class="o">+=</span> <span class="n">html</span><span class="p">[</span><span class="o">-</span><span class="n">tail</span><span class="p">:]</span>
+
+    <span class="c"># now they must be equal</span>
+    <span class="k">assert</span> <span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">)</span> <span class="o">==</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">),</span> <span class="s">&#39;</span><span class="si">%d</span><span class="s"> != </span><span class="si">%d</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">),</span> <span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">text</span>
+
+
+<span class="k">def</span> <span class="nf">make_clean_visible</span><span class="p">(</span><span class="n">_html</span><span class="p">,</span> <span class="n">tag_replacement_char</span><span class="o">=</span><span class="s">&#39; &#39;</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Takes an HTML-like Unicode string as input and returns a UTF-8</span>
+<span class="sd">    encoded string with all tags replaced by whitespace. In particular,</span>
+<span class="sd">    all Unicode characters inside HTML are replaced with a single</span>
+<span class="sd">    whitespace character.</span>
+
+<span class="sd">    This does not detect comments, style, script, link.  It also does</span>
+<span class="sd">    do anything with HTML-escaped characters.  All of these are</span>
+<span class="sd">    handled by the clean_html pre-cursor step.</span>
+
+<span class="sd">    Pre-existing whitespace of any kind (newlines, tabs) is converted</span>
+<span class="sd">    to single spaces &#39; &#39;, which has the same byte length (and</span>
+<span class="sd">    character length).</span>
+
+<span class="sd">    This is a simple state machine iterator without regexes</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span> <span class="nf">non_tag_chars</span><span class="p">(</span><span class="n">html</span><span class="p">):</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">while</span> <span class="n">n</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">):</span>
+            <span class="n">angle</span> <span class="o">=</span> <span class="n">html</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s">&#39;&lt;&#39;</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">angle</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+                <span class="k">yield</span> <span class="n">html</span><span class="p">[</span><span class="n">n</span><span class="p">:]</span>
+                <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">)</span>
+                <span class="k">break</span>
+            <span class="k">yield</span> <span class="n">html</span><span class="p">[</span><span class="n">n</span><span class="p">:</span><span class="n">angle</span><span class="p">]</span>
+            <span class="n">n</span> <span class="o">=</span> <span class="n">angle</span>
+
+            <span class="k">while</span> <span class="n">n</span> <span class="o">&lt;</span> <span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">):</span>
+                <span class="n">nl</span> <span class="o">=</span> <span class="n">html</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+                <span class="n">angle</span> <span class="o">=</span> <span class="n">html</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="s">&#39;&gt;&#39;</span><span class="p">,</span> <span class="n">n</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">angle</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+                    <span class="k">yield</span> <span class="s">&#39; &#39;</span> <span class="o">*</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">)</span> <span class="o">-</span> <span class="n">n</span><span class="p">)</span>
+                    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">html</span><span class="p">)</span>
+                    <span class="k">break</span>
+                <span class="k">elif</span> <span class="n">nl</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span> <span class="ow">or</span> <span class="n">angle</span> <span class="o">&lt;</span> <span class="n">nl</span><span class="p">:</span>
+                    <span class="k">yield</span> <span class="s">&#39; &#39;</span> <span class="o">*</span> <span class="p">(</span><span class="n">angle</span> <span class="o">+</span> <span class="mi">1</span> <span class="o">-</span> <span class="n">n</span><span class="p">)</span>
+                    <span class="n">n</span> <span class="o">=</span> <span class="n">angle</span> <span class="o">+</span> <span class="mi">1</span>
+                    <span class="k">break</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">yield</span> <span class="s">&#39; &#39;</span> <span class="o">*</span> <span class="p">(</span><span class="n">nl</span> <span class="o">-</span> <span class="n">n</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span>
+                    <span class="n">n</span> <span class="o">=</span> <span class="n">nl</span> <span class="o">+</span> <span class="mi">1</span>
+                    <span class="c"># do not break</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">_html</span><span class="p">,</span> <span class="nb">unicode</span><span class="p">):</span>
+        <span class="n">_html</span> <span class="o">=</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">_html</span><span class="p">,</span> <span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+
+    <span class="c"># Protect emails by substituting with unique key</span>
+    <span class="n">_html</span> <span class="o">=</span> <span class="n">fix_emails</span><span class="p">(</span><span class="n">_html</span><span class="p">)</span>
+
+    <span class="c">#Strip tags with previous logic</span>
+    <span class="n">non_tag</span> <span class="o">=</span> <span class="s">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">non_tag_chars</span><span class="p">(</span><span class="n">_html</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">non_tag</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="clean_visible"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._clean_visible.clean_visible">[docs]</a><span class="k">class</span> <span class="nc">clean_visible</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Create ``body.clean_visible`` from ``body.clean_html``.</span>
+
+<span class="sd">    :class:`clean_visible` maintains byte position of all visible text</span>
+<span class="sd">    in an HTML (or XML) document and removes all of parts that are not</span>
+<span class="sd">    visible in a web browser.  This allows taggers to operate on the</span>
+<span class="sd">    visible-only text and any standoff annotation can refer to the</span>
+<span class="sd">    original byte positions.</span>
+
+<span class="sd">    If there is no ``clean_html``, but there is a ``raw`` property</span>
+<span class="sd">    with a ``text/plain`` media type, use that value directly.</span>
+
+<span class="sd">    This has no useful configuration options.  The configuration</span>
+<span class="sd">    metadata will include a setting:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        require_clean_html: true</span>
+
+<span class="sd">    Setting this to ``false`` will always fail.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;clean_visible&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;require_clean_html&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">}</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;require_clean_html&#39;</span><span class="p">]:</span>
+            <span class="k">raise</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">ConfigurationError</span><span class="p">(</span><span class="s">&#39;{0} only does clean_html&#39;</span>
+                                              <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="p">))</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream_item</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span><span class="p">:</span>
+                <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span> <span class="o">=</span> \
+                    <span class="n">make_clean_visible</span><span class="p">(</span><span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;stream item </span><span class="si">%s</span><span class="s">: &#39;</span>
+                             <span class="s">&#39;generated </span><span class="si">%d</span><span class="s"> bytes of clean_visible &#39;</span>
+                             <span class="s">&#39;from </span><span class="si">%d</span><span class="s"> bytes of clean_html&#39;</span><span class="p">,</span>
+                             <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span>
+                             <span class="nb">len</span><span class="p">(</span><span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">),</span>
+                             <span class="nb">len</span><span class="p">(</span><span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span><span class="p">))</span>
+            <span class="k">elif</span> <span class="p">(</span><span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span> <span class="ow">and</span>
+                  <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">media_type</span> <span class="o">==</span> <span class="s">&#39;text/plain&#39;</span><span class="p">):</span>
+                <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;stream item </span><span class="si">%s</span><span class="s">: &#39;</span>
+                             <span class="s">&#39;generated </span><span class="si">%d</span><span class="s"> bytes of clean_visible &#39;</span>
+                             <span class="s">&#39;from text/plain raw content&#39;</span><span class="p">,</span>
+                             <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span>
+                             <span class="nb">len</span><span class="p">(</span><span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">))</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;skipped stream item </span><span class="si">%s</span><span class="s">: &#39;</span>
+                             <span class="s">&#39;neither clean_html nor text/plain content&#39;</span><span class="p">,</span>
+                             <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">stream_item</span>
+
+</div>
+<span class="k">def</span> <span class="nf">make_clean_visible_file</span><span class="p">(</span><span class="n">i_chunk</span><span class="p">,</span> <span class="n">clean_visible_path</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;make a temp file of clean_visible text&#39;&#39;&#39;</span>
+    <span class="n">_clean</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="p">,</span> <span class="s">&#39;wb&#39;</span><span class="p">)</span>
+    <span class="n">_clean</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&#39;&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;&#39;</span><span class="p">)</span>
+    <span class="n">_clean</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&#39;&lt;root&gt;&#39;</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">idx</span><span class="p">,</span> <span class="n">si</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">i_chunk</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="c"># create the FILENAME element anyway, so the ordering</span>
+            <span class="c"># remains the same as the i_chunk and can be aligned.</span>
+            <span class="n">stream_id</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">stream_id</span> <span class="o">=</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span>
+        <span class="n">doc</span> <span class="o">=</span> <span class="n">lxml</span><span class="o">.</span><span class="n">etree</span><span class="o">.</span><span class="n">Element</span><span class="p">(</span><span class="s">&quot;FILENAME&quot;</span><span class="p">,</span> <span class="n">stream_id</span><span class="o">=</span><span class="n">stream_id</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span> <span class="ow">and</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="c"># is UTF-8, and etree wants .text to be unicode</span>
+                <span class="n">doc</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+                <span class="n">doc</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="n">drop_invalid_and_upper_utf8_chars</span><span class="p">(</span>
+                    <span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">))</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="c"># this should never ever fail, because if it does,</span>
+                <span class="c"># then it means that clean_visible (or more likely</span>
+                <span class="c"># clean_html) is not what it is supposed to be.</span>
+                <span class="c"># Therefore, do not take it lightly:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="n">traceback</span><span class="o">.</span><span class="n">format_exc</span><span class="p">(</span><span class="n">exc</span><span class="p">))</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;failed on stream_id=</span><span class="si">%s</span><span class="s"> to follow:&#39;</span><span class="p">,</span>
+                                <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">))</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;above was stream_id=</span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+                <span class="c"># [I don&#39;t know who calls this, but note that this</span>
+                <span class="c"># will *always* fail if clean_visible isn&#39;t valid UTF-8.]</span>
+                <span class="k">raise</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">doc</span><span class="o">.</span><span class="n">text</span> <span class="o">=</span> <span class="s">&#39;&#39;</span>
+        <span class="n">_clean</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">lxml</span><span class="o">.</span><span class="n">etree</span><span class="o">.</span><span class="n">tostring</span><span class="p">(</span><span class="n">doc</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s">&#39;UTF-8&#39;</span><span class="p">))</span>
+    <span class="n">_clean</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&#39;&lt;/root&gt;&#39;</span><span class="p">)</span>
+    <span class="n">_clean</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+    <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="n">clean_visible_path</span><span class="p">)</span>
+
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    ## hack to capture html for inspection</span>
+<span class="sd">    _html = open(clean_visible_path + &#39;-html&#39;, &#39;wb&#39;)</span>
+<span class="sd">    for idx, si in enumerate(i_chunk):</span>
+<span class="sd">        _html.write(&#39;&lt;FILENAME docid=&quot;%s&quot;&gt;&#39; % si.stream_id)</span>
+<span class="sd">        if si.body and si.body.clean_html:</span>
+<span class="sd">            _html.write(si.body.clean_html)</span>
+<span class="sd">        _html.write(&#39;&lt;/FILENAME&gt;\n&#39;)</span>
+<span class="sd">    _html.close()</span>
+<span class="sd">    ## replace this with log.info()</span>
+<span class="sd">    print clean_visible_path + &#39;-html&#39;</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+
+<span class="c"># used in &#39;cleanse&#39; below</span>
+<span class="n">whitespace</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">&#39;&#39;&#39;(\s|</span><span class="se">\n</span><span class="s">)+&#39;&#39;&#39;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">UNICODE</span><span class="p">)</span>
+<span class="n">strip_punctuation</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">([(</span><span class="nb">ord</span><span class="p">(</span><span class="n">c</span><span class="p">),</span> <span class="s">u&#39; &#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">string</span><span class="o">.</span><span class="n">punctuation</span><span class="p">])</span>
+<span class="n">penn_treebank_brackets</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">&#39;&#39;&#39;-[RL].B-&#39;&#39;&#39;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">UNICODE</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">cleanse</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="n">lower</span><span class="o">=</span><span class="bp">True</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Convert a unicode string into a lowercase string with no</span>
+<span class="sd">punctuation and only spaces for whitespace.</span>
+
+<span class="sd">Replace PennTreebank escaped brackets with &#39; &#39;:</span>
+<span class="sd">-LRB- -RRB- -RSB- -RSB- -LCB- -RCB-</span>
+<span class="sd">(The acronyms stand for (Left|Right) (Round|Square|Curly) Bracket.)</span>
+<span class="sd">http://www.cis.upenn.edu/~treebank/tokenization.html</span>
+
+<span class="sd">:param span: string</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">span</span><span class="p">,</span> <span class="nb">unicode</span><span class="p">),</span> \
+        <span class="s">&#39;got non-unicode string </span><span class="si">%r</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">span</span>
+    <span class="c"># lowercase, strip punctuation, and shrink all whitespace</span>
+    <span class="n">span</span> <span class="o">=</span> <span class="n">penn_treebank_brackets</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s">&#39; &#39;</span><span class="p">,</span> <span class="n">span</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">lower</span><span class="p">:</span>
+        <span class="n">span</span> <span class="o">=</span> <span class="n">span</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+    <span class="n">span</span> <span class="o">=</span> <span class="n">span</span><span class="o">.</span><span class="n">translate</span><span class="p">(</span><span class="n">strip_punctuation</span><span class="p">)</span>
+    <span class="n">span</span> <span class="o">=</span> <span class="n">whitespace</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s">&#39; &#39;</span><span class="p">,</span> <span class="n">span</span><span class="p">)</span>
+    <span class="c"># trim any leading or trailing whitespace</span>
+    <span class="k">return</span> <span class="n">span</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

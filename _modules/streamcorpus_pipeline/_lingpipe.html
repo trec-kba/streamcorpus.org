@@ -1,0 +1,383 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._lingpipe &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._lingpipe</h1><div class="highlight"><pre>
+<span class="c">#!/usr/bin/env python</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">streamcorpus_pipeline.TaggerBatchTransform for LingPipe</span>
+
+<span class="sd">This software is released under an MIT/X11 open source license.</span>
+
+<span class="sd">Copyright 2012-2014 Diffeo, Inc.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+<span class="kn">import</span> <span class="nn">itertools</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">time</span>
+<span class="kn">import</span> <span class="nn">traceback</span>
+<span class="kn">import</span> <span class="nn">uuid</span>
+
+<span class="kn">from</span> <span class="nn">nltk.tokenize</span> <span class="kn">import</span> <span class="n">WhitespaceTokenizer</span>
+
+<span class="kn">from</span> <span class="nn">streamcorpus</span> <span class="kn">import</span> <span class="n">Token</span><span class="p">,</span> <span class="n">Sentence</span><span class="p">,</span> <span class="n">EntityType</span><span class="p">,</span> <span class="n">Chunk</span><span class="p">,</span> <span class="n">Offset</span><span class="p">,</span> \
+    <span class="n">OffsetType</span><span class="p">,</span> <span class="n">Gender</span><span class="p">,</span> <span class="n">MentionType</span><span class="p">,</span> <span class="n">Attribute</span><span class="p">,</span> <span class="n">AttributeType</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._taggers</span> <span class="kn">import</span> <span class="n">TaggerBatchTransform</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="c">## map LingPipe&#39;s specific strings to streamcorpus.EntityType</span>
+<span class="n">_ENTITY_TYPES</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;PERSON&#39;</span><span class="p">:</span> <span class="n">EntityType</span><span class="o">.</span><span class="n">PER</span><span class="p">,</span>
+    <span class="s">&#39;FEMALE_PRONOUN&#39;</span><span class="p">:</span> <span class="n">EntityType</span><span class="o">.</span><span class="n">PER</span><span class="p">,</span>
+    <span class="s">&#39;MALE_PRONOUN&#39;</span><span class="p">:</span> <span class="n">EntityType</span><span class="o">.</span><span class="n">PER</span><span class="p">,</span>
+    <span class="s">&#39;ORGANIZATION&#39;</span><span class="p">:</span> <span class="n">EntityType</span><span class="o">.</span><span class="n">ORG</span><span class="p">,</span>
+    <span class="s">&#39;LOCATION&#39;</span><span class="p">:</span> <span class="n">EntityType</span><span class="o">.</span><span class="n">LOC</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="n">_PRONOUNS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s">&#39;FEMALE_PRONOUN&#39;</span><span class="p">:</span> <span class="n">Gender</span><span class="o">.</span><span class="n">FEMALE</span><span class="p">,</span>
+    <span class="s">&#39;MALE_PRONOUN&#39;</span><span class="p">:</span> <span class="n">Gender</span><span class="o">.</span><span class="n">MALE</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="n">filename_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">&#39;&#39;&#39;.*?&lt;FILENAME docid=&quot;(?P&lt;stream_id&gt;.*?)&quot;&gt;(?P&lt;tagged_doc&gt;(.|</span><span class="se">\n</span><span class="s">)*?)&lt;/FILENAME&gt;&#39;&#39;&#39;</span><span class="p">)</span>
+<span class="n">sentence_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">&#39;&#39;&#39;(?P&lt;before&gt;(.|</span><span class="se">\n</span><span class="s">)*?)&lt;s i=&quot;(?P&lt;sentence_id&gt;.*?)&quot;&gt;(?P&lt;tagged_sentence&gt;(.|</span><span class="se">\n</span><span class="s">)*?)&lt;/s&gt;&#39;&#39;&#39;</span><span class="p">)</span>
+<span class="n">ner_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">&#39;&#39;&#39;(?P&lt;before&gt;(.|</span><span class="se">\n</span><span class="s">)*?)(&lt;ENAMEX ID=&quot;(?P&lt;chain_id&gt;.*?)&quot; TYPE=&quot;(?P&lt;entity_type&gt;.*?)&quot;&gt;(?P&lt;entity_string&gt;(.|</span><span class="se">\n</span><span class="s">)*?)&lt;/ENAMEX&gt;)?&#39;&#39;&#39;</span><span class="p">)</span>
+
+<span class="c">## detect any kind of whitespace, including unicode whitespace, which</span>
+<span class="c">## should include \u200b, even though python2.7 apparently lost this</span>
+<span class="c">## knowledge:  http://bugs.python.org/issue10567</span>
+<span class="n">only_whitespace</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">u&#39;&#39;&#39;^(\s|</span><span class="se">\n</span><span class="s">|</span><span class="se">\u200b</span><span class="s">)*$&#39;&#39;&#39;</span><span class="p">,</span> <span class="n">re</span><span class="o">.</span><span class="n">UNICODE</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">files</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Iterate over &lt;FILENAME&gt; XML-like tags and tokenize with nltk</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">for</span> <span class="n">f_match</span> <span class="ow">in</span> <span class="n">filename_re</span><span class="o">.</span><span class="n">finditer</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+        <span class="k">yield</span> <span class="n">f_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;stream_id&#39;</span><span class="p">),</span> <span class="n">f_match</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;tagged_doc&#39;</span><span class="p">)</span>
+
+<span class="k">class</span> <span class="nc">LingPipeParser</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">clear</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tok_num</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">byte_idx</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">line_idx</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">word_tokenizer</span> <span class="o">=</span> <span class="n">WhitespaceTokenizer</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">set</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ner_dom</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">clear</span><span class="p">()</span>
+        <span class="c">## nltk wants a unicode string, so decode, it and then we will</span>
+        <span class="c">## re-encode it to carefully recover the byte offsets.  We</span>
+        <span class="c">## must take care not to use any nltk components that insert</span>
+        <span class="c">## new whitespace, such</span>
+        <span class="c">## nltk.tokenize.treebank.TreebankTokenizer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">ner_dom</span> <span class="o">=</span> <span class="n">ner_dom</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">attributes</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">relations</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">sentences</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Iterate over &lt;s&gt; XML-like tags and tokenize with nltk</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">for</span> <span class="n">sentence_id</span><span class="p">,</span> <span class="n">node</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">ner_dom</span><span class="o">.</span><span class="n">childNodes</span><span class="p">):</span>
+            <span class="c">## increment the char index with any text before the &lt;s&gt;</span>
+            <span class="c">## tag.  Crucial assumption here is that the LingPipe XML</span>
+            <span class="c">## tags are inserted into the original byte array without</span>
+            <span class="c">## modifying the portions that are not inside the</span>
+            <span class="c">## LingPipe-added tags themselves.</span>
+            <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">nodeType</span> <span class="o">==</span> <span class="n">node</span><span class="o">.</span><span class="n">TEXT_NODE</span><span class="p">:</span>
+                <span class="c">## we expect to only see TEXT_NODE instances with whitespace</span>
+                <span class="k">assert</span> <span class="n">only_whitespace</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">data</span><span class="p">),</span> <span class="nb">repr</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+
+                <span class="c">## must convert back to utf-8 to have expected byte offsets</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">byte_idx</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">))</span>
+
+                <span class="c">## count full lines, i.e. only those that end with a \n</span>
+                <span class="c"># &#39;True&#39; here means keep the trailing newlines</span>
+                <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">splitlines</span><span class="p">(</span><span class="bp">True</span><span class="p">):</span>
+                    <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="p">):</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">line_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;getting tokens for sentence_id=</span><span class="si">%d</span><span class="s">&#39;</span> <span class="o">%</span> <span class="n">sentence_id</span><span class="p">)</span>
+                <span class="n">more_sentence_remains</span> <span class="o">=</span> <span class="bp">True</span>
+                <span class="k">while</span> <span class="n">more_sentence_remains</span><span class="p">:</span>
+                    <span class="c">## always a sentence</span>
+                    <span class="n">sent</span> <span class="o">=</span> <span class="n">Sentence</span><span class="p">()</span>
+
+                    <span class="c">## this &quot;node&quot; came from for loop above, and it&#39;s</span>
+                    <span class="c">## childNodes list might have been popped by a</span>
+                    <span class="c">## previous pass through this while loop</span>
+                    <span class="n">tokens</span> <span class="o">=</span> <span class="nb">iter</span><span class="p">(</span> <span class="bp">self</span><span class="o">.</span><span class="n">tokens</span><span class="p">(</span> <span class="n">node</span> <span class="p">)</span> <span class="p">)</span>
+
+                    <span class="k">while</span> <span class="mi">1</span><span class="p">:</span>
+                        <span class="k">try</span><span class="p">:</span>
+                            <span class="n">tok</span> <span class="o">=</span> <span class="n">tokens</span><span class="o">.</span><span class="n">next</span><span class="p">()</span>
+                            <span class="n">sent</span><span class="o">.</span><span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tok</span><span class="p">)</span>
+                            <span class="c">#logger.debug(&#39;got token: %r  %d %d&#39; % (tok.token, tok.mention_id, tok.sentence_pos))</span>
+
+                        <span class="k">except</span> <span class="ne">StopIteration</span><span class="p">:</span>
+                            <span class="k">yield</span> <span class="n">sent</span>
+                            <span class="n">more_sentence_remains</span> <span class="o">=</span> <span class="bp">False</span>
+                            <span class="k">break</span>
+
+    <span class="k">def</span> <span class="nf">_make_token</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Instantiates a Token from self._input_string[start:end]</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="c">## all thfift strings must be encoded first</span>
+        <span class="n">tok_string</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_input_string</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">]</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">only_whitespace</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">tok_string</span><span class="p">):</span>
+            <span class="c">## drop any tokens with only whitespace</span>
+            <span class="k">return</span> <span class="bp">None</span>
+        <span class="n">tok</span> <span class="o">=</span> <span class="n">Token</span><span class="p">()</span>
+        <span class="n">tok</span><span class="o">.</span><span class="n">token</span> <span class="o">=</span> <span class="n">tok_string</span>
+        <span class="n">tok</span><span class="o">.</span><span class="n">token_num</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">tok_num</span>
+        <span class="k">if</span> <span class="s">&#39;BYTES&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;offset_types&#39;</span><span class="p">]:</span>
+            <span class="n">tok</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">BYTES</span><span class="p">]</span> <span class="o">=</span> <span class="n">Offset</span><span class="p">(</span>
+                <span class="nb">type</span> <span class="o">=</span>  <span class="n">OffsetType</span><span class="o">.</span><span class="n">BYTES</span><span class="p">,</span>
+                <span class="n">first</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">byte_idx</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_input_string</span><span class="p">[:</span><span class="n">start</span><span class="p">]</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">)),</span>
+                <span class="n">length</span><span class="o">=</span><span class="nb">len</span><span class="p">(</span><span class="n">tok_string</span><span class="p">),</span>
+                <span class="n">value</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;offset_debugging&#39;</span><span class="p">]</span> <span class="ow">and</span> <span class="n">tok_string</span> <span class="ow">or</span> <span class="bp">None</span><span class="p">,</span>
+                <span class="p">)</span>
+        <span class="k">if</span> <span class="s">&#39;LINES&#39;</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;offset_types&#39;</span><span class="p">]:</span>
+            <span class="n">tok</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">LINES</span><span class="p">]</span> <span class="o">=</span> <span class="n">Offset</span><span class="p">(</span>
+                <span class="nb">type</span> <span class="o">=</span>  <span class="n">OffsetType</span><span class="o">.</span><span class="n">LINES</span><span class="p">,</span>
+                <span class="n">first</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">line_idx</span><span class="p">,</span>
+                <span class="n">length</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span>
+                <span class="n">value</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;offset_debugging&#39;</span><span class="p">]</span> <span class="ow">and</span> <span class="n">tok_string</span> <span class="ow">or</span> <span class="bp">None</span><span class="p">,</span>
+                <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">tok_num</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="c">## keep track of position within a sentence</span>
+        <span class="n">tok</span><span class="o">.</span><span class="n">sentence_pos</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sent_pos</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sent_pos</span> <span class="o">+=</span> <span class="mi">1</span>
+        <span class="k">return</span> <span class="n">tok</span>
+
+    <span class="k">def</span> <span class="nf">tokens</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">sentence_dom</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Tokenize all the words and preserve NER labels from ENAMEX tags</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="c">## keep track of sentence position, which is reset for each</span>
+        <span class="c">## sentence, and used above in _make_token</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sent_pos</span> <span class="o">=</span> <span class="mi">0</span>
+    
+        <span class="c">## keep track of mention_id, so we can distinguish adjacent</span>
+        <span class="c">## multi-token mentions within the same coref chain</span>
+        <span class="n">mention_id</span> <span class="o">=</span> <span class="mi">0</span>
+
+        <span class="k">while</span> <span class="nb">len</span><span class="p">(</span><span class="n">sentence_dom</span><span class="o">.</span><span class="n">childNodes</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c">## shrink the sentence_dom&#39;s child nodes.  In v0_2_0 this</span>
+            <span class="c">## was required to cope with HitMaxi16.  Now it is just to</span>
+            <span class="c">## save memory.</span>
+            <span class="n">node</span> <span class="o">=</span> <span class="n">sentence_dom</span><span class="o">.</span><span class="n">childNodes</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">node</span><span class="o">.</span><span class="n">nodeType</span> <span class="o">==</span> <span class="n">node</span><span class="o">.</span><span class="n">TEXT_NODE</span><span class="p">:</span>
+                <span class="c">## process portion before an ENAMEX tag</span>
+                <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">splitlines</span><span class="p">(</span><span class="bp">True</span><span class="p">):</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_input_string</span> <span class="o">=</span> <span class="n">line</span>
+                    <span class="k">for</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">word_tokenizer</span><span class="o">.</span><span class="n">span_tokenize</span><span class="p">(</span><span class="n">line</span><span class="p">):</span>
+                        <span class="n">tok</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_make_token</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="n">tok</span><span class="p">:</span>
+                            <span class="k">yield</span> <span class="n">tok</span>
+
+                    <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="p">):</span>
+                        <span class="c">## maintain the index to the current line</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">line_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                    <span class="c">## increment index pasat the &#39;before&#39; portion</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">byte_idx</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">))</span>
+
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c">## process text inside an ENAMEX tag</span>
+                <span class="k">assert</span> <span class="n">node</span><span class="o">.</span><span class="n">nodeName</span> <span class="o">==</span> <span class="s">&#39;ENAMEX&#39;</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">nodeName</span>
+                <span class="n">chain_id</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;ID&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+                <span class="n">entity_type</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;TYPE&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">value</span>
+                <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">childNodes</span><span class="p">:</span>
+                    <span class="k">assert</span> <span class="n">node</span><span class="o">.</span><span class="n">nodeType</span> <span class="o">==</span> <span class="n">node</span><span class="o">.</span><span class="n">TEXT_NODE</span><span class="p">,</span> <span class="n">node</span><span class="o">.</span><span class="n">nodeType</span>
+                    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">node</span><span class="o">.</span><span class="n">data</span><span class="o">.</span><span class="n">splitlines</span><span class="p">(</span><span class="bp">True</span><span class="p">):</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_input_string</span> <span class="o">=</span> <span class="n">line</span>
+                        <span class="k">for</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">word_tokenizer</span><span class="o">.</span><span class="n">span_tokenize</span><span class="p">(</span><span class="n">line</span><span class="p">):</span>
+                            <span class="n">tok</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_make_token</span><span class="p">(</span><span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">)</span>
+                            <span class="k">if</span> <span class="n">tok</span><span class="p">:</span>
+                                <span class="k">if</span> <span class="n">entity_type</span> <span class="ow">in</span> <span class="n">_PRONOUNS</span><span class="p">:</span>
+                                    <span class="n">tok</span><span class="o">.</span><span class="n">mention_type</span> <span class="o">=</span> <span class="n">MentionType</span><span class="o">.</span><span class="n">PRO</span>
+                                    <span class="n">tok</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">=</span> <span class="n">_ENTITY_TYPES</span><span class="p">[</span><span class="n">entity_type</span><span class="p">]</span>
+                                    
+                                    <span class="c">## create an attribute</span>
+                                    <span class="n">attr</span> <span class="o">=</span> <span class="n">Attribute</span><span class="p">(</span>
+                                        <span class="n">attribute_type</span><span class="o">=</span><span class="n">AttributeType</span><span class="o">.</span><span class="n">PER_GENDER</span><span class="p">,</span>
+                                        <span class="n">value</span><span class="o">=</span><span class="nb">str</span><span class="p">(</span><span class="n">_PRONOUNS</span><span class="p">[</span><span class="n">entity_type</span><span class="p">])</span>
+                                        <span class="p">)</span>
+                                    <span class="bp">self</span><span class="o">.</span><span class="n">attributes</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">attr</span><span class="p">)</span>
+
+                                <span class="k">else</span><span class="p">:</span>
+                                    <span class="c">## regular entity_type</span>
+                                    <span class="n">tok</span><span class="o">.</span><span class="n">mention_type</span> <span class="o">=</span> <span class="n">MentionType</span><span class="o">.</span><span class="n">NAME</span>
+                                    <span class="n">tok</span><span class="o">.</span><span class="n">entity_type</span> <span class="o">=</span> <span class="n">_ENTITY_TYPES</span><span class="p">[</span><span class="n">entity_type</span><span class="p">]</span>
+
+                                <span class="n">tok</span><span class="o">.</span><span class="n">equiv_id</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">chain_id</span><span class="p">)</span>
+                                <span class="n">tok</span><span class="o">.</span><span class="n">mention_id</span> <span class="o">=</span> <span class="n">mention_id</span>
+                                <span class="k">yield</span> <span class="n">tok</span>
+
+                        <span class="k">if</span> <span class="n">line</span><span class="o">.</span><span class="n">endswith</span><span class="p">(</span><span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span><span class="p">):</span>
+                            <span class="c">## maintain the index to the current line</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">line_idx</span> <span class="o">+=</span> <span class="mi">1</span>
+
+                        <span class="c">## increment index pasat the &#39;before&#39; portion</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">byte_idx</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">))</span>
+
+                <span class="c">## increment mention_id within this sentence</span>
+                <span class="n">mention_id</span> <span class="o">+=</span> <span class="mi">1</span>
+
+
+<div class="viewcode-block" id="lingpipe"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._lingpipe.lingpipe">[docs]</a><span class="k">class</span> <span class="nc">lingpipe</span><span class="p">(</span><span class="n">TaggerBatchTransform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    a streamcorpus_pipeline batch transform that converts a chunk into a new</span>
+<span class="sd">    chunk with data generated by LingPipe</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;lingpipe&#39;</span>
+    <span class="n">tagger_id</span> <span class="o">=</span> <span class="s">&#39;lingpipe&#39;</span>
+
+    <span class="n">template</span> <span class="o">=</span> \
+        <span class="sd">&#39;&#39;&#39;cd %(tagger_root_path)s/demos/generic/bin &amp;&amp; &#39;&#39;&#39;</span> <span class="o">+</span> \
+        <span class="sd">&#39;&#39;&#39;cat %(clean_visible_path)s | ./cmd_coref_en_news_muc6.sh &#39;&#39;&#39;</span> <span class="o">+</span> \
+        <span class="sd">&#39;&#39;&#39; &quot;-contentType=text/html&quot; &quot;-includeElts=FILENAME&quot; &#39;&#39;&#39;</span> <span class="o">+</span> \
+        <span class="sd">&#39;&#39;&#39; %(java_heap_size)s 1&gt; %(ner_xml_path)s&#39;&#39;&#39;</span>
+
+    <span class="k">def</span> <span class="nf">get_sentences</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ner_dom</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;parse the sentences and tokens out of the XML&#39;&#39;&#39;</span>
+        <span class="n">lp_parser</span> <span class="o">=</span> <span class="n">LingPipeParser</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
+        <span class="n">lp_parser</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">ner_dom</span><span class="p">)</span>
+        <span class="n">sentences</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span> <span class="n">lp_parser</span><span class="o">.</span><span class="n">sentences</span><span class="p">()</span> <span class="p">)</span>
+        <span class="k">return</span> <span class="n">sentences</span><span class="p">,</span> <span class="n">lp_parser</span><span class="o">.</span><span class="n">relations</span><span class="p">,</span> <span class="n">lp_parser</span><span class="o">.</span><span class="n">attributes</span>
+
+</div>
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="kn">import</span> <span class="nn">argparse</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s">&#39;action&#39;</span><span class="p">,</span> 
+                        <span class="n">metavar</span><span class="o">=</span><span class="s">&#39;postproc|align&#39;</span><span class="p">,</span> 
+                        <span class="n">help</span><span class="o">=</span><span class="s">&#39;postproc&#39;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s">&#39;input_file&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s">&#39;XML file from LingPipe&#39;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s">&#39;output_file&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s">&#39;XML file to generate with OWPL data&#39;</span><span class="p">)</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span><span class="s">&#39;--source_chunk&#39;</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s">&#39;source chunk file that was input to the pipeline data&#39;</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">args</span><span class="o">.</span><span class="n">action</span> <span class="o">==</span> <span class="s">&#39;postproc&#39;</span><span class="p">:</span>
+        <span class="n">text</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">input_file</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+        <span class="k">print</span> <span class="s">&#39;read </span><span class="si">%d</span><span class="s"> bytes from </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">text</span><span class="p">),</span> <span class="n">args</span><span class="o">.</span><span class="n">input_file</span><span class="p">)</span>
+
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s">&#39;need to instantiate a LingPipeParser object here&#39;</span><span class="p">)</span>
+        
+        <span class="k">for</span> <span class="n">stream_id</span><span class="p">,</span> <span class="n">tagged_doc</span> <span class="ow">in</span> <span class="n">files</span><span class="p">(</span><span class="n">text</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">sent</span> <span class="ow">in</span> <span class="n">sentences</span><span class="p">(</span><span class="n">tagged_doc</span><span class="p">):</span>  <span class="c"># pylint: disable=E0602</span>
+                <span class="k">for</span> <span class="n">tok</span> <span class="ow">in</span> <span class="n">sent</span><span class="o">.</span><span class="n">tokens</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">tok</span><span class="o">.</span><span class="n">entity_type</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                        <span class="k">print</span> <span class="n">tok</span><span class="p">,</span> <span class="n">EntityType</span><span class="o">.</span><span class="n">_VALUES_TO_NAMES</span><span class="p">[</span><span class="n">tok</span><span class="o">.</span><span class="n">entity_type</span><span class="p">]</span>
+
+    <span class="k">elif</span> <span class="n">args</span><span class="o">.</span><span class="n">action</span> <span class="o">==</span> <span class="s">&#39;align&#39;</span><span class="p">:</span>
+        <span class="n">i_chunk</span> <span class="o">=</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">source_chunk</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s">&#39;rb&#39;</span><span class="p">)</span>
+        <span class="n">o_chunk</span> <span class="o">=</span> <span class="n">Chunk</span><span class="p">(</span><span class="n">path</span><span class="o">=</span><span class="n">args</span><span class="o">.</span><span class="n">output_file</span><span class="p">,</span>  <span class="n">mode</span><span class="o">=</span><span class="s">&#39;wb&#39;</span><span class="p">)</span>
+        <span class="n">align_chunk_with_ner</span><span class="p">(</span><span class="n">args</span><span class="o">.</span><span class="n">input_file</span><span class="p">,</span> <span class="n">i_chunk</span><span class="p">,</span> <span class="n">o_chunk</span><span class="p">)</span>  <span class="c"># pylint: disable=E0602</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

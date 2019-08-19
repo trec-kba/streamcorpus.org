@@ -1,0 +1,248 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._tokenizer &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._tokenizer</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Pipeline transform for :mod:`nltk`.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2015 Diffeo, Inc.</span>
+
+<span class="sd">.. autoclass:: nltk_tokenizer</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+
+<span class="kn">from</span> <span class="nn">nltk.tokenize</span> <span class="kn">import</span> <span class="n">WhitespaceTokenizer</span>
+<span class="kn">from</span> <span class="nn">nltk.tokenize.punkt</span> <span class="kn">import</span> <span class="n">PunktSentenceTokenizer</span>
+
+<span class="kn">from</span> <span class="nn">sortedcollection</span> <span class="kn">import</span> <span class="n">SortedCollection</span>
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus</span> <span class="kn">import</span> <span class="n">Token</span><span class="p">,</span> <span class="n">Sentence</span><span class="p">,</span> <span class="n">Offset</span><span class="p">,</span> <span class="n">OffsetType</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">IncrementalTransform</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="nltk_tokenizer"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._tokenizer.nltk_tokenizer">[docs]</a><span class="k">class</span> <span class="nc">nltk_tokenizer</span><span class="p">(</span><span class="n">IncrementalTransform</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Minimal tokenizer using :mod:`nltk`.</span>
+
+<span class="sd">    This is an incremental transform that creates minimal tokens and</span>
+<span class="sd">    does minimal label alignment.  The stream item must have a</span>
+<span class="sd">    `clean_visible` part already.  The stream item is tagged with</span>
+<span class="sd">    ``nltk_tokenizer``.</span>
+
+<span class="sd">    This tokenizer has very few dependencies, only the :mod:`nltk`</span>
+<span class="sd">    Python package.  However, the tokens that it creates are</span>
+<span class="sd">    extremely minimal, with no part-of-speech details or other</span>
+<span class="sd">    information.  The tokens only contain the `token` property and</span>
+<span class="sd">    character-offset information.</span>
+
+<span class="sd">    If there are labels with character offsets attached to the stream</span>
+<span class="sd">    item body, and this stage is configured with an `annotator_id`,</span>
+<span class="sd">    then this stage attempts to attach those labels to tokens.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;nltk_tokenizer&#39;</span>
+    <span class="n">tagger_id</span> <span class="o">=</span> <span class="s">&#39;nltk_tokenizer&#39;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">nltk_tokenizer</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sentence_tokenizer</span> <span class="o">=</span> <span class="n">PunktSentenceTokenizer</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">word_tokenizer</span> <span class="o">=</span> <span class="n">WhitespaceTokenizer</span><span class="p">()</span>  <span class="c"># PunktWordTokenizer()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">annotator_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;annotator_id&#39;</span><span class="p">,</span> <span class="bp">None</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_sentences</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">clean_visible</span><span class="p">):</span>
+        <span class="s">&#39;generate strings identified as sentences&#39;</span>
+        <span class="n">previous_end</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">clean_visible</span> <span class="o">=</span> <span class="n">clean_visible</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">sentence_tokenizer</span><span class="o">.</span><span class="n">span_tokenize</span><span class="p">(</span><span class="n">clean_visible</span><span class="p">):</span>
+            <span class="c"># no need to check start, because the first byte of text</span>
+            <span class="c"># is always first byte of first sentence, and we will</span>
+            <span class="c"># have already made the previous sentence longer on the</span>
+            <span class="c"># end if there was an overlap.</span>
+            <span class="k">if</span> <span class="n">start</span> <span class="o">&lt;</span> <span class="n">previous_end</span><span class="p">:</span>
+                <span class="n">start</span> <span class="o">=</span> <span class="n">previous_end</span>
+                <span class="k">if</span> <span class="n">start</span> <span class="o">&gt;</span> <span class="n">end</span><span class="p">:</span>
+                    <span class="c"># skip this sentence... because it was eaten by</span>
+                    <span class="c"># an earlier sentence with a label</span>
+                    <span class="k">continue</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">label</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">label_index</span><span class="o">.</span><span class="n">find_le</span><span class="p">(</span><span class="n">end</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+                <span class="n">label</span> <span class="o">=</span> <span class="bp">None</span>
+            <span class="k">if</span> <span class="n">label</span><span class="p">:</span>
+                <span class="c">## avoid splitting a label</span>
+                <span class="n">off</span> <span class="o">=</span> <span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">]</span>
+                <span class="n">end</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="n">off</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">off</span><span class="o">.</span><span class="n">length</span><span class="p">,</span> <span class="n">end</span><span class="p">)</span>
+            <span class="n">previous_end</span> <span class="o">=</span> <span class="n">end</span>
+            <span class="n">sent_str</span> <span class="o">=</span> <span class="n">clean_visible</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">]</span>
+            <span class="k">yield</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span><span class="p">,</span> <span class="n">sent_str</span>
+
+    <span class="k">def</span> <span class="nf">make_label_index</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream_item</span><span class="p">):</span>
+        <span class="s">&#39;make a sortedcollection on body.labels&#39;</span>
+        <span class="n">labels</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">labels</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">annotator_id</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">labels</span><span class="p">:</span>
+            <span class="n">labels</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">label_index</span> <span class="o">=</span> <span class="n">SortedCollection</span><span class="p">(</span>
+            <span class="p">[</span><span class="n">l</span> <span class="k">for</span> <span class="n">l</span> <span class="ow">in</span> <span class="n">labels</span> <span class="k">if</span> <span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span> <span class="ow">in</span> <span class="n">l</span><span class="o">.</span><span class="n">offsets</span><span class="p">],</span>
+            <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">label</span><span class="p">:</span> <span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">]</span><span class="o">.</span><span class="n">first</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">make_sentences</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream_item</span><span class="p">):</span>
+        <span class="s">&#39;assemble Sentence and Token objects&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">make_label_index</span><span class="p">(</span><span class="n">stream_item</span><span class="p">)</span>
+        <span class="n">sentences</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">token_num</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">new_mention_id</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">sent_start</span><span class="p">,</span> <span class="n">sent_end</span><span class="p">,</span> <span class="n">sent_str</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_sentences</span><span class="p">(</span>
+                <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">):</span>
+            <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">sent_str</span><span class="p">,</span> <span class="nb">unicode</span><span class="p">)</span>
+            <span class="n">sent</span> <span class="o">=</span> <span class="n">Sentence</span><span class="p">()</span>
+            <span class="n">sentence_pos</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">for</span> <span class="n">start</span><span class="p">,</span> <span class="n">end</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">word_tokenizer</span><span class="o">.</span><span class="n">span_tokenize</span><span class="p">(</span><span class="n">sent_str</span><span class="p">):</span>
+                <span class="n">token_str</span> <span class="o">=</span> <span class="n">sent_str</span><span class="p">[</span><span class="n">start</span><span class="p">:</span><span class="n">end</span><span class="p">]</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span>
+                <span class="n">tok</span> <span class="o">=</span> <span class="n">Token</span><span class="p">(</span>
+                    <span class="n">token_num</span><span class="o">=</span><span class="n">token_num</span><span class="p">,</span>
+                    <span class="n">token</span><span class="o">=</span><span class="n">token_str</span><span class="p">,</span>
+                    <span class="n">sentence_pos</span><span class="o">=</span><span class="n">sentence_pos</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="n">tok</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">]</span> <span class="o">=</span> <span class="n">Offset</span><span class="p">(</span>
+                    <span class="nb">type</span><span class="o">=</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">,</span>
+                    <span class="n">first</span><span class="o">=</span><span class="n">sent_start</span> <span class="o">+</span> <span class="n">start</span><span class="p">,</span>
+                    <span class="n">length</span><span class="o">=</span><span class="n">end</span> <span class="o">-</span> <span class="n">start</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="c"># whitespace tokenizer will never get a token</span>
+                <span class="c"># boundary in the middle of an &#39;author&#39; label</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">label</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">label_index</span><span class="o">.</span><span class="n">find_le</span><span class="p">(</span><span class="n">sent_start</span> <span class="o">+</span> <span class="n">start</span><span class="p">)</span>
+                <span class="k">except</span> <span class="ne">ValueError</span><span class="p">:</span>
+                    <span class="n">label</span> <span class="o">=</span> <span class="bp">None</span>
+                <span class="k">if</span> <span class="n">label</span><span class="p">:</span>
+                    <span class="n">off</span> <span class="o">=</span> <span class="n">label</span><span class="o">.</span><span class="n">offsets</span><span class="p">[</span><span class="n">OffsetType</span><span class="o">.</span><span class="n">CHARS</span><span class="p">]</span>
+                    <span class="k">if</span> <span class="n">off</span><span class="o">.</span><span class="n">first</span> <span class="o">+</span> <span class="n">off</span><span class="o">.</span><span class="n">length</span> <span class="o">&gt;</span> <span class="n">sent_start</span> <span class="o">+</span> <span class="n">start</span><span class="p">:</span>
+                        <span class="n">streamcorpus</span><span class="o">.</span><span class="n">add_annotation</span><span class="p">(</span><span class="n">tok</span><span class="p">,</span> <span class="n">label</span><span class="p">)</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;adding label to tok: </span><span class="si">%r</span><span class="s"> has </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                                     <span class="n">tok</span><span class="o">.</span><span class="n">token</span><span class="p">,</span> <span class="n">label</span><span class="o">.</span><span class="n">target</span><span class="o">.</span><span class="n">target_id</span><span class="p">)</span>
+
+                        <span class="k">if</span> <span class="n">label</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">label_to_mention_id</span><span class="p">:</span>
+                            <span class="n">mention_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">label_to_mention_id</span><span class="p">[</span><span class="n">label</span><span class="p">]</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">mention_id</span> <span class="o">=</span> <span class="n">new_mention_id</span>
+                            <span class="n">new_mention_id</span> <span class="o">+=</span> <span class="mi">1</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">label_to_mention_id</span><span class="p">[</span><span class="n">label</span><span class="p">]</span> <span class="o">=</span> <span class="n">mention_id</span>
+
+                        <span class="n">tok</span><span class="o">.</span><span class="n">mention_id</span> <span class="o">=</span> <span class="n">mention_id</span>
+
+                <span class="n">token_num</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sentence_pos</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sent</span><span class="o">.</span><span class="n">tokens</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">tok</span><span class="p">)</span>
+            <span class="n">sentences</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">sent</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">sentences</span>
+
+    <span class="k">def</span> <span class="nf">process_item</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream_item</span><span class="p">,</span> <span class="n">context</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">stream_item</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">label_index</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">label_to_mention_id</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">()</span>
+        <span class="n">sentences</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">make_sentences</span><span class="p">(</span><span class="n">stream_item</span><span class="p">)</span>
+        <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">sentences</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">tagger_id</span><span class="p">]</span> <span class="o">=</span> <span class="n">sentences</span>
+
+        <span class="k">return</span> <span class="n">stream_item</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

@@ -1,0 +1,500 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._kvlayer &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._kvlayer</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Read and write stream items to/from :mod:`kvlayer`.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2015 Diffeo, Inc.</span>
+
+<span class="sd">.. autoclass:: from_kvlayer</span>
+<span class="sd">.. autoclass:: to_kvlayer</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">struct</span>
+
+<span class="kn">import</span> <span class="nn">kvlayer</span>
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._kvlayer_table_names</span> <span class="kn">import</span> \
+    <span class="n">BY_TIME</span><span class="p">,</span> <span class="n">WITH_SOURCE</span><span class="p">,</span> <span class="n">KEYWORDS</span><span class="p">,</span> <span class="n">HASH_TF_SID</span><span class="p">,</span> <span class="n">HASH_FREQUENCY</span><span class="p">,</span> \
+    <span class="n">HASH_KEYWORD</span><span class="p">,</span> \
+    <span class="n">stream_id_to_kvlayer_key</span><span class="p">,</span> <span class="n">key_for_stream_item</span><span class="p">,</span> \
+    <span class="n">STREAM_ITEM_TABLE_DEFS</span><span class="p">,</span> <span class="n">STREAM_ITEM_VALUE_DEFS</span><span class="p">,</span> <span class="n">INDEX_TABLE_NAMES</span><span class="p">,</span> \
+    <span class="n">STREAM_ITEMS_TABLE</span><span class="p">,</span> <span class="n">STREAM_ITEMS_SOURCE_INDEX</span><span class="p">,</span> <span class="n">STREAM_ITEMS_TIME_INDEX</span>
+<span class="kn">import</span> <span class="nn">yakonfig</span>
+
+<span class="k">try</span><span class="p">:</span>
+    <span class="kn">from</span> <span class="nn">._kvlayer_keyword_search</span> <span class="kn">import</span> <span class="n">keyword_indexer</span>
+<span class="k">except</span> <span class="ne">ImportError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+    <span class="n">keyword_indexer</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+
+<span class="k">class</span> <span class="nc">WrongNumberException</span><span class="p">(</span><span class="ne">Exception</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+
+<span class="k">def</span> <span class="nf">iter_one_or_ex</span><span class="p">(</span><span class="n">gen</span><span class="p">):</span>
+    <span class="c"># for when you want exactly one result out of an iterable.</span>
+    <span class="c"># raise WrongNumberException otherwise.</span>
+    <span class="n">val</span> <span class="o">=</span> <span class="bp">None</span>
+    <span class="nb">any</span> <span class="o">=</span> <span class="bp">False</span>
+    <span class="k">for</span> <span class="n">tv</span> <span class="ow">in</span> <span class="n">gen</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">:</span>
+            <span class="nb">any</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="n">val</span> <span class="o">=</span> <span class="n">tv</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="n">WrongNumberException</span><span class="p">(</span><span class="s">&quot;only wanted one, but got another&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">any</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="n">WrongNumberException</span><span class="p">(</span><span class="s">&quot;didn&#39;t get any&quot;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">val</span>
+
+
+<div class="viewcode-block" id="from_kvlayer"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._kvlayer.from_kvlayer">[docs]</a><span class="k">class</span> <span class="nc">from_kvlayer</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Read documents from a :mod:`kvlayer` supported database.</span>
+
+<span class="sd">    .. currentmodule:: streamcorpus_pipeline._kvlayer</span>
+
+<span class="sd">    :mod:`kvlayer` must be included in the top-level configuration.</span>
+<span class="sd">    Typically this reads stream items previously written by</span>
+<span class="sd">    :class:`to_kvlayer`.</span>
+
+<span class="sd">    The input string is a sequence of stream IDs; see :meth:`__call__`</span>
+<span class="sd">    for details.  If no values are specified, scans the entire</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.STREAM_ITEMS_TABLE`</span>
+<span class="sd">    table.</span>
+
+<span class="sd">    .. automethod:: __call__</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;from_kvlayer&#39;</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="n">yakonfig</span><span class="o">.</span><span class="n">check_toplevel_config</span><span class="p">(</span><span class="n">kvlayer</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">from_kvlayer</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">kvlayer</span><span class="o">.</span><span class="n">client</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">setup_namespace</span><span class="p">(</span><span class="n">STREAM_ITEM_TABLE_DEFS</span><span class="p">,</span>
+                                    <span class="n">STREAM_ITEM_VALUE_DEFS</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_loadkey</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">k</span><span class="p">):</span>
+        <span class="n">key</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">iter_one_or_ex</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">STREAM_ITEMS_TABLE</span><span class="p">,</span> <span class="n">k</span><span class="p">))</span>
+        <span class="n">errors</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">decrypt_and_uncompress</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">errors</span><span class="p">,</span> <span class="ne">Exception</span><span class="p">):</span>
+                <span class="n">errors</span> <span class="o">=</span> <span class="ne">Exception</span><span class="p">(</span><span class="nb">repr</span><span class="p">(</span><span class="n">errors</span><span class="p">))</span>
+            <span class="k">raise</span> <span class="n">errors</span>
+        <span class="k">yield</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">deserialize</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_loadrange</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">keya</span><span class="p">,</span> <span class="n">keyb</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">key</span><span class="p">,</span> <span class="n">data</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">scan</span><span class="p">(</span><span class="n">STREAM_ITEMS_TABLE</span><span class="p">,</span> <span class="p">(</span><span class="n">keya</span><span class="p">,</span> <span class="n">keyb</span><span class="p">)):</span>
+            <span class="n">errors</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">decrypt_and_uncompress</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">errors</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;could not decrypet_and_uncompress </span><span class="si">%s</span><span class="s">: </span><span class="si">%s</span><span class="s">&#39;</span><span class="p">,</span>
+                             <span class="n">key</span><span class="p">,</span> <span class="n">errors</span><span class="p">)</span>
+                <span class="k">continue</span>
+            <span class="k">yield</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">deserialize</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+
+<div class="viewcode-block" id="from_kvlayer.__call__"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._kvlayer.from_kvlayer.__call__">[docs]</a>    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;Actually scan the table, yielding stream items.</span>
+
+<span class="sd">        `i_str` consists of a sequence of 20-byte encoded stream IDs.</span>
+<span class="sd">        These are the 16 bytes of the document ID, plus the 4-byte</span>
+<span class="sd">        big-endian stream time.  :func:`serialize_si` can produce</span>
+<span class="sd">        these.  `i_str` can then consist of a single encoded stream</span>
+<span class="sd">        ID; an encoded stream ID, a literal ``&lt;``, and a second</span>
+<span class="sd">        encoded stream ID to specify a range of documents; or a list</span>
+<span class="sd">        of either of the preceding separated by literal ``;``.</span>
+
+<span class="sd">        .. todo:: make this support keyword index strings</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">i_str</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loadrange</span><span class="p">(</span><span class="bp">None</span><span class="p">,</span> <span class="bp">None</span><span class="p">):</span>
+                <span class="k">yield</span> <span class="n">si</span>
+            <span class="k">return</span>
+        <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">parse_keys_and_ranges</span><span class="p">(</span><span class="n">i_str</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loadkey</span><span class="p">,</span>
+                                        <span class="bp">self</span><span class="o">.</span><span class="n">_loadrange</span><span class="p">):</span>
+            <span class="k">yield</span> <span class="n">si</span>
+
+</div></div>
+<span class="n">_STREAM_ID_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">r&#39;[0-9]+-[0-9a-fA-F]{32}&#39;</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">parse_keys_and_ranges</span><span class="p">(</span><span class="n">i_str</span><span class="p">,</span> <span class="n">keyfunc</span><span class="p">,</span> <span class="n">rangefunc</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Parse the :class:`from_kvlayer` input string.</span>
+
+<span class="sd">    This accepts two formats.  In the textual format, it accepts any</span>
+<span class="sd">    number of stream IDs in timestamp-docid format, separated by ``,``</span>
+<span class="sd">    or ``;``, and processes those as individual stream IDs.  In the</span>
+<span class="sd">    binary format, it accepts 20-byte key blobs (16 bytes md5 hash, 4</span>
+<span class="sd">    bytes timestamp) split by ``;`` or ``&lt;``; e.g., ``a&lt;f;x`` loads</span>
+<span class="sd">    scans keys `a` through `f` and loads singly key `x`.</span>
+
+<span class="sd">    `keyfunc` and `rangefunc` are run as generators and their yields</span>
+<span class="sd">    are yielded from this function.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">while</span> <span class="n">i_str</span><span class="p">:</span>
+        <span class="n">m</span> <span class="o">=</span> <span class="n">_STREAM_ID_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">m</span><span class="p">:</span>
+            <span class="c"># old style text stream_id</span>
+            <span class="k">for</span> <span class="n">retval</span> <span class="ow">in</span> <span class="n">keyfunc</span><span class="p">(</span><span class="n">stream_id_to_kvlayer_key</span><span class="p">(</span><span class="n">m</span><span class="o">.</span><span class="n">group</span><span class="p">())):</span>
+                <span class="k">yield</span> <span class="n">retval</span>
+            <span class="n">i_str</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[</span><span class="n">m</span><span class="o">.</span><span class="n">end</span><span class="p">():]</span>
+            <span class="k">while</span> <span class="n">i_str</span> <span class="ow">and</span> <span class="p">((</span><span class="n">i_str</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s">&#39;,&#39;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">i_str</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">==</span> <span class="s">&#39;;&#39;</span><span class="p">)):</span>
+                <span class="n">i_str</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[</span><span class="mi">1</span><span class="p">:]</span>
+            <span class="k">continue</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span> <span class="o">==</span> <span class="n">SI_KEY_LENGTH</span><span class="p">:</span>
+            <span class="c"># one key, get it.</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="n">parse_si_key</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">retval</span> <span class="ow">in</span> <span class="n">keyfunc</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+                <span class="k">yield</span> <span class="n">retval</span>
+            <span class="k">return</span>
+
+        <span class="n">keya</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[:</span><span class="n">SI_KEY_LENGTH</span><span class="p">]</span>
+        <span class="n">splitc</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[</span><span class="n">SI_KEY_LENGTH</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">splitc</span> <span class="o">==</span> <span class="s">&#39;&lt;&#39;</span><span class="p">:</span>
+            <span class="c"># range</span>
+            <span class="n">keyb</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[</span><span class="n">SI_KEY_LENGTH</span><span class="o">+</span><span class="mi">1</span><span class="p">:</span><span class="n">SI_KEY_LENGTH</span><span class="o">+</span><span class="mi">1</span><span class="o">+</span><span class="n">SI_KEY_LENGTH</span><span class="p">]</span>
+            <span class="n">i_str</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[</span><span class="n">SI_KEY_LENGTH</span><span class="o">+</span><span class="mi">1</span><span class="o">+</span><span class="n">SI_KEY_LENGTH</span><span class="p">:]</span>
+            <span class="n">keya</span> <span class="o">=</span> <span class="n">parse_si_key</span><span class="p">(</span><span class="n">keya</span><span class="p">)</span>
+            <span class="n">keyb</span> <span class="o">=</span> <span class="n">parse_si_key</span><span class="p">(</span><span class="n">keyb</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">retval</span> <span class="ow">in</span> <span class="n">rangefunc</span><span class="p">(</span><span class="n">keya</span><span class="p">,</span> <span class="n">keyb</span><span class="p">):</span>
+                <span class="k">yield</span> <span class="n">retval</span>
+        <span class="k">elif</span> <span class="n">splitc</span> <span class="o">==</span> <span class="s">&#39;;&#39;</span><span class="p">:</span>
+            <span class="c"># keya is single key to load</span>
+            <span class="n">keya</span> <span class="o">=</span> <span class="n">parse_si_key</span><span class="p">(</span><span class="n">keya</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">retval</span> <span class="ow">in</span> <span class="n">keyfunc</span><span class="p">(</span><span class="n">keya</span><span class="p">):</span>
+                <span class="k">yield</span> <span class="n">retval</span>
+            <span class="n">i_str</span> <span class="o">=</span> <span class="n">i_str</span><span class="p">[</span><span class="n">SI_KEY_LENGTH</span><span class="o">+</span><span class="mi">1</span><span class="o">+</span><span class="mi">1</span><span class="p">:]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s">&#39;bogus key splitter </span><span class="si">%s</span><span class="s">, </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span> <span class="n">splitc</span><span class="p">,</span> <span class="n">i_str</span><span class="p">)</span>
+            <span class="k">return</span>
+        <span class="c"># continue parsing i_str</span>
+
+
+<span class="k">def</span> <span class="nf">get_kvlayer_stream_item</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">stream_id</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Retrieve a :class:`streamcorpus.StreamItem` from :mod:`kvlayer`.</span>
+
+<span class="sd">    This function requires that `client` already be set up properly::</span>
+
+<span class="sd">        client = kvlayer.client()</span>
+<span class="sd">        client.setup_namespace(STREAM_ITEM_TABLE_DEFS,</span>
+<span class="sd">                               STREAM_ITEM_VALUE_DEFS)</span>
+<span class="sd">        si = get_kvlayer_stream_item(client, stream_id)</span>
+
+<span class="sd">    `stream_id` is in the form of</span>
+<span class="sd">    :data:`streamcorpus.StreamItem.stream_id` and contains the</span>
+<span class="sd">    ``epoch_ticks``, a hyphen, and the ``doc_id``.</span>
+
+<span class="sd">    :param client: kvlayer client object</span>
+<span class="sd">    :type client: :class:`kvlayer.AbstractStorage`</span>
+<span class="sd">    :param str stream_id: stream Id to retrieve</span>
+<span class="sd">    :return: corresponding :class:`streamcorpus.StreamItem`</span>
+<span class="sd">    :raise exceptions.KeyError: if `stream_id` is malformed or does</span>
+<span class="sd">      not correspond to anything in the database</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="n">client</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">client</span> <span class="o">=</span> <span class="n">kvlayer</span><span class="o">.</span><span class="n">client</span><span class="p">()</span>
+        <span class="n">client</span><span class="o">.</span><span class="n">setup_namespace</span><span class="p">(</span><span class="n">STREAM_ITEM_TABLE_DEFS</span><span class="p">,</span>
+                               <span class="n">STREAM_ITEM_VALUE_DEFS</span><span class="p">)</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">stream_id_to_kvlayer_key</span><span class="p">(</span><span class="n">stream_id</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">STREAM_ITEMS_TABLE</span><span class="p">,</span> <span class="n">key</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">errors</span><span class="p">,</span> <span class="n">bytestr</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">decrypt_and_uncompress</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">deserialize</span><span class="p">(</span><span class="n">bytestr</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="n">stream_id</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">delete_kvlayer_stream_item</span><span class="p">(</span><span class="n">client</span><span class="p">,</span> <span class="n">stream_id</span><span class="p">):</span>
+    <span class="k">if</span> <span class="n">client</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">client</span> <span class="o">=</span> <span class="n">kvlayer</span><span class="o">.</span><span class="n">client</span><span class="p">()</span>
+        <span class="n">client</span><span class="o">.</span><span class="n">setup_namespace</span><span class="p">(</span><span class="n">STREAM_ITEM_TABLE_DEFS</span><span class="p">,</span>
+                               <span class="n">STREAM_ITEM_VALUE_DEFS</span><span class="p">)</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">stream_id_to_kvlayer_key</span><span class="p">(</span><span class="n">stream_id</span><span class="p">)</span>
+    <span class="n">client</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="n">STREAM_ITEMS_TABLE</span><span class="p">,</span> <span class="n">key</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="to_kvlayer"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._kvlayer.to_kvlayer">[docs]</a><span class="k">class</span> <span class="nc">to_kvlayer</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Writer that puts stream items in :mod:`kvlayer`.</span>
+
+<span class="sd">    :mod:`kvlayer` must be included in the top-level configuration.</span>
+<span class="sd">    Compressed stream items are written to the</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.STREAM_ITEMS_TABLE`</span>
+<span class="sd">    table.</span>
+
+<span class="sd">    This writer has one configuration parameter: `indexes` adds</span>
+<span class="sd">    additional indexes on the data.  Supported index types include</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.WITH_SOURCE`,</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.BY_TIME`,</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.HASH_TF_SID`,</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.HASH_FREQUENCIES`,</span>
+<span class="sd">    and</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.HASH_KEYWORD`.</span>
+<span class="sd">    The special index type</span>
+<span class="sd">    :data:`~streamcorpus_pipeline._kvlayer_table_names.KEYWORDS`</span>
+<span class="sd">    expands to all of the keyword-index tables.</span>
+
+<span class="sd">    If keyword indexing is enabled, it indexes the tokens generated</span>
+<span class="sd">    by some or all of the taggers that have been run, less a set of</span>
+<span class="sd">    stop words.  The configuration parameter `keyword_tagger_ids` may</span>
+<span class="sd">    be set to a list of tagger IDs; if it is set, only the tokens</span>
+<span class="sd">    from those tagger IDs will be indexed.  If it is set to ``null``</span>
+<span class="sd">    or left unset, all taggers&#39; tokens will be indexed as distinct</span>
+<span class="sd">    words.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;to_kvlayer&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span><span class="s">&#39;indexes&#39;</span><span class="p">:</span> <span class="p">[]}</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">check_config</span><span class="p">(</span><span class="n">config</span><span class="p">,</span> <span class="n">name</span><span class="p">):</span>
+        <span class="n">yakonfig</span><span class="o">.</span><span class="n">check_toplevel_config</span><span class="p">(</span><span class="n">kvlayer</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">ndx</span> <span class="ow">in</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]:</span>
+            <span class="k">if</span> <span class="n">ndx</span> <span class="o">!=</span> <span class="n">KEYWORDS</span> <span class="ow">and</span> <span class="n">ndx</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">INDEX_TABLE_NAMES</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">ConfigurationError</span><span class="p">(</span>
+                    <span class="s">&#39;invalid {0} indexes type {1!r}&#39;</span>
+                    <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">ndx</span><span class="p">))</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">keyword_indexer</span><span class="p">,</span> <span class="nb">basestring</span><span class="p">):</span>
+                <span class="k">if</span> <span class="n">ndx</span> <span class="ow">in</span> <span class="p">[</span><span class="n">KEYWORDS</span><span class="p">,</span> <span class="n">HASH_TF_SID</span><span class="p">,</span> <span class="n">HASH_FREQUENCY</span><span class="p">,</span>
+                           <span class="n">HASH_KEYWORD</span><span class="p">]:</span>
+                    <span class="k">raise</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">ConfigurationError</span><span class="p">(</span>
+                        <span class="s">&#39;cannot configure {0} index {1}: {2}&#39;</span>
+                        <span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">ndx</span><span class="p">,</span> <span class="n">keyword_indexer</span><span class="p">))</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span> <span class="nf">normalize_config</span><span class="p">(</span><span class="n">config</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">KEYWORDS</span> <span class="ow">in</span> <span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]:</span>
+            <span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">KEYWORDS</span><span class="p">)</span>
+            <span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">HASH_TF_SID</span><span class="p">)</span>
+            <span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">HASH_FREQUENCY</span><span class="p">)</span>
+            <span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">HASH_KEYWORD</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">to_kvlayer</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span> <span class="o">=</span> <span class="n">kvlayer</span><span class="o">.</span><span class="n">client</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="o">.</span><span class="n">setup_namespace</span><span class="p">(</span><span class="n">STREAM_ITEM_TABLE_DEFS</span><span class="p">,</span>
+                                    <span class="n">STREAM_ITEM_VALUE_DEFS</span><span class="p">)</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">keyword_indexer</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="n">hash_docs</span> <span class="o">=</span> <span class="n">HASH_TF_SID</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]</span>
+        <span class="n">hash_frequencies</span> <span class="o">=</span> <span class="n">HASH_FREQUENCY</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]</span>
+        <span class="n">hash_keywords</span> <span class="o">=</span> <span class="n">HASH_KEYWORD</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;indexes&#39;</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">hash_docs</span> <span class="ow">or</span> <span class="n">hash_frequencies</span> <span class="ow">or</span> <span class="n">hash_keywords</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">keyword_indexer</span> <span class="o">=</span> <span class="n">keyword_indexer</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="p">,</span> <span class="n">hash_docs</span><span class="o">=</span><span class="n">hash_docs</span><span class="p">,</span>
+                <span class="n">hash_frequencies</span><span class="o">=</span><span class="n">hash_frequencies</span><span class="p">,</span>
+                <span class="n">hash_keywords</span><span class="o">=</span><span class="n">hash_keywords</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="n">si_keys</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">sitable</span> <span class="o">=</span> <span class="n">TableBuffer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="p">,</span> <span class="n">STREAM_ITEMS_TABLE</span><span class="p">)</span>
+        <span class="n">outputs</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">indexes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;indexes&#39;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="k">for</span> <span class="n">index_name</span> <span class="ow">in</span> <span class="n">indexes</span><span class="p">:</span>
+            <span class="n">itn</span> <span class="o">=</span> <span class="n">INDEX_TABLE_NAMES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">index_name</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">itn</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                <span class="n">outputs</span><span class="p">[</span><span class="n">itn</span><span class="p">]</span> <span class="o">=</span> <span class="n">TableBuffer</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">client</span><span class="p">,</span> <span class="n">itn</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span><span class="p">(</span><span class="n">t_path</span><span class="p">):</span>
+            <span class="n">si_key</span> <span class="o">=</span> <span class="n">key_for_stream_item</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+            <span class="n">data</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">serialize</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+            <span class="n">errors</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">compress_and_encrypt</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+            <span class="k">assert</span> <span class="ow">not</span> <span class="n">errors</span><span class="p">,</span> <span class="n">errors</span>
+            <span class="n">sitable</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">si_key</span><span class="p">,</span> <span class="n">data</span><span class="p">)</span>
+            <span class="n">si_keys</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">serialize_si_key</span><span class="p">(</span><span class="n">si_key</span><span class="p">))</span>
+
+            <span class="k">for</span> <span class="n">index_name</span> <span class="ow">in</span> <span class="n">indexes</span><span class="p">:</span>
+                <span class="n">index_func</span> <span class="o">=</span> <span class="n">INDEX_FUNCTIONS</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">index_name</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">index_func</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+                    <span class="k">for</span> <span class="n">tablename</span><span class="p">,</span> <span class="n">kv</span> <span class="ow">in</span> <span class="n">index_func</span><span class="p">(</span><span class="n">si</span><span class="p">):</span>
+                        <span class="n">outputs</span><span class="p">[</span><span class="n">tablename</span><span class="p">]</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="o">*</span><span class="n">kv</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">keyword_indexer</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">keyword_indexer</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+
+        <span class="n">sitable</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">outbuf</span> <span class="ow">in</span> <span class="n">outputs</span><span class="o">.</span><span class="n">itervalues</span><span class="p">():</span>
+            <span class="n">outbuf</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">si_keys</span>
+
+</div>
+<span class="n">SI_KEY_LENGTH</span> <span class="o">=</span> <span class="mi">20</span>
+
+
+<span class="k">def</span> <span class="nf">serialize_si_key</span><span class="p">(</span><span class="n">si_key</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Return packed bytes representation of StreamItem kvlayer key.</span>
+<span class="sd">    The result is 20 bytes, 16 of md5 hash, 4 of int timestamp.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">si_key</span><span class="p">[</span><span class="mi">0</span><span class="p">])</span> <span class="o">!=</span> <span class="mi">16</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s">&#39;bad StreamItem key, expected 16 byte &#39;</span>
+                         <span class="s">&#39;md5 hash binary digest, got: {0!r}&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">si_key</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">struct</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="s">&#39;&gt;16si&#39;</span><span class="p">,</span> <span class="n">si_key</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="n">si_key</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+
+
+<span class="k">def</span> <span class="nf">parse_si_key</span><span class="p">(</span><span class="n">si_key_bytes</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Parse result of serialize_si_key()</span>
+<span class="sd">    Return kvlayer key tuple.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">struct</span><span class="o">.</span><span class="n">unpack</span><span class="p">(</span><span class="s">&#39;&gt;16si&#39;</span><span class="p">,</span> <span class="n">si_key_bytes</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">streamitem_to_key_data</span><span class="p">(</span><span class="n">si</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    extract the parts of a StreamItem that go into a kvlayer key,</span>
+<span class="sd">    convert StreamItem to blob for storage.</span>
+
+<span class="sd">    return (kvlayer key tuple), data blob</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">key_for_stream_item</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">serialize</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+    <span class="n">errors</span><span class="p">,</span> <span class="n">data</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">compress_and_encrypt</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
+    <span class="k">assert</span> <span class="ow">not</span> <span class="n">errors</span><span class="p">,</span> <span class="n">errors</span>
+    <span class="k">return</span> <span class="n">key</span><span class="p">,</span> <span class="n">data</span>
+
+
+<span class="k">def</span> <span class="nf">index_source</span><span class="p">(</span><span class="n">si</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    yield (table name, (key, value))</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">source</span><span class="p">:</span>
+        <span class="k">yield</span> <span class="p">(</span><span class="n">STREAM_ITEMS_SOURCE_INDEX</span><span class="p">,</span> <span class="p">(</span><span class="n">key_for_stream_item</span><span class="p">(</span><span class="n">si</span><span class="p">),</span> <span class="n">si</span><span class="o">.</span><span class="n">source</span><span class="p">))</span>
+
+
+<span class="k">def</span> <span class="nf">index_time</span><span class="p">(</span><span class="n">si</span><span class="p">):</span>
+    <span class="n">key</span> <span class="o">=</span> <span class="n">key_for_stream_item</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+    <span class="k">yield</span> <span class="p">(</span><span class="n">STREAM_ITEMS_TIME_INDEX</span><span class="p">,</span> <span class="p">((</span><span class="n">key</span><span class="p">[</span><span class="mi">1</span><span class="p">],</span> <span class="n">key</span><span class="p">[</span><span class="mi">0</span><span class="p">]),</span> <span class="s">&#39;&#39;</span><span class="p">))</span>
+
+
+<span class="c"># functions take a StreamItem and yield (table name, (key, value))</span>
+<span class="n">INDEX_FUNCTIONS</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">WITH_SOURCE</span><span class="p">:</span> <span class="n">index_source</span><span class="p">,</span>
+    <span class="n">BY_TIME</span><span class="p">:</span> <span class="n">index_time</span><span class="p">,</span>
+<span class="p">}</span>
+
+
+<span class="k">class</span> <span class="nc">TableBuffer</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">kvl</span><span class="p">,</span> <span class="n">table_name</span><span class="p">,</span> <span class="n">buffer_count</span><span class="o">=</span><span class="mi">100</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">kvl</span> <span class="o">=</span> <span class="n">kvl</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">table_name</span> <span class="o">=</span> <span class="n">table_name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer_count</span> <span class="o">=</span> <span class="n">buffer_count</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">put</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">key</span><span class="p">,</span> <span class="n">value</span><span class="p">))</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">buffer_count</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">kvl</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">table_name</span><span class="p">,</span> <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span> <span class="nf">flush</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">kvl</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">table_name</span><span class="p">,</span> <span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">buffer</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">buffer</span> <span class="o">=</span> <span class="p">[]</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

@@ -1,0 +1,198 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._rejester &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._rejester</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;Support for running pipeline  tasks under :mod:`rejester`.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2014 Diffeo, Inc.</span>
+
+<span class="sd">Since running pipeline stages can be expensive, particularly if busy</span>
+<span class="sd">third-party stages are run, it can be desirable to run the pipeline</span>
+<span class="sd">under the :mod:`rejester` distributed-computing framework.  This</span>
+<span class="sd">module provides rejester &quot;run&quot; and &quot;terminate&quot; functions that run</span>
+<span class="sd">the pipeline.  A typical rejester work spec will look like::</span>
+
+<span class="sd">    work_spec = {</span>
+<span class="sd">        &#39;name&#39;: &#39;pipeline&#39;,</span>
+<span class="sd">        &#39;desc&#39;: &#39;run streamcorpus_pipeline&#39;,</span>
+<span class="sd">        &#39;min_gb&#39;: 8,</span>
+<span class="sd">        &#39;config&#39;: yakonfig.get_global_config(),</span>
+<span class="sd">        &#39;module&#39;: &#39;streamcorpus_pipeline._rejester&#39;,</span>
+<span class="sd">        &#39;run_function&#39;: &#39;rejester_run_function&#39;,</span>
+<span class="sd">        &#39;terminate_function&#39;: &#39;rejester_terminate_function&#39;,</span>
+<span class="sd">    }</span>
+
+<span class="sd">Work units have an input filename or other description as a key, and</span>
+<span class="sd">any non-empty dictionary as their data.  They are processed using</span>
+<span class="sd">:meth:`streamcorpus_pipeline.Pipeline._process_task`.  Pass the work</span>
+<span class="sd">spec and work unit dictionaries to</span>
+<span class="sd">:meth:`rejester.TaskMaster.update_bundle` to inject the work</span>
+<span class="sd">definitions.</span>
+
+<span class="sd">Note that this framework makes no effort to actually distribute the</span>
+<span class="sd">data around.  Either only run rejester jobs on one system, or ensure</span>
+<span class="sd">that all systems running rejester workers have a shared filesystem</span>
+<span class="sd">such as NFS, or use network-based reader and writer stages such as</span>
+<span class="sd">:class:`~streamcorpus_pipeline._s3_storage.from_s3_chunks` and</span>
+<span class="sd">:class:`~streamcorpus_pipeline._kvlayer.to_kvlayer`.</span>
+
+<span class="sd">.. autofunction:: rejester_run_function</span>
+<span class="sd">.. autofunction:: rejester_terminate_function</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="kn">import</span> <span class="nn">dblogger</span>
+<span class="kn">import</span> <span class="nn">kvlayer</span>
+<span class="kn">import</span> <span class="nn">streamcorpus_pipeline</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._pipeline</span> <span class="kn">import</span> <span class="n">PipelineFactory</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">PipelineStages</span><span class="p">,</span> <span class="n">Configured</span>
+<span class="kn">import</span> <span class="nn">yakonfig</span>
+
+
+<span class="n">static_stages</span> <span class="o">=</span> <span class="bp">None</span>
+
+
+<div class="viewcode-block" id="rejester_run_function"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._rejester.rejester_run_function">[docs]</a><span class="k">def</span> <span class="nf">rejester_run_function</span><span class="p">(</span><span class="n">work_unit</span><span class="p">):</span>
+    <span class="k">global</span> <span class="n">static_stages</span>
+    <span class="c"># we can get away with one &#39;global&#39; stages object. We don&#39;t</span>
+    <span class="c"># actually have substantially different config from work_unit to</span>
+    <span class="c"># work_unit, especially not within streamcoprus_pipeline wokr.</span>
+    <span class="k">if</span> <span class="n">static_stages</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="n">static_stages</span> <span class="o">=</span> <span class="n">PipelineStages</span><span class="p">()</span>
+    <span class="n">stages</span> <span class="o">=</span> <span class="n">static_stages</span>
+
+    <span class="k">with</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">defaulted_config</span><span class="p">([</span><span class="n">dblogger</span><span class="p">,</span> <span class="n">kvlayer</span><span class="p">,</span> <span class="n">streamcorpus_pipeline</span><span class="p">],</span>
+                                   <span class="n">config</span><span class="o">=</span><span class="n">work_unit</span><span class="o">.</span><span class="n">spec</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;config&#39;</span><span class="p">,</span> <span class="p">{})):</span>
+        <span class="n">scp_config</span> <span class="o">=</span> <span class="n">yakonfig</span><span class="o">.</span><span class="n">get_global_config</span><span class="p">(</span><span class="s">&#39;streamcorpus_pipeline&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s">&#39;external_stages_path&#39;</span> <span class="ow">in</span> <span class="n">scp_config</span><span class="p">:</span>
+            <span class="n">stages</span><span class="o">.</span><span class="n">load_external_stages</span><span class="p">(</span><span class="n">scp_config</span><span class="p">[</span><span class="s">&#39;external_stages_path&#39;</span><span class="p">])</span>
+        <span class="k">if</span> <span class="s">&#39;external_stages_modules&#39;</span> <span class="ow">in</span> <span class="n">scp_config</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">mod</span> <span class="ow">in</span> <span class="n">scp_config</span><span class="p">[</span><span class="s">&#39;external_stages_modules&#39;</span><span class="p">]:</span>
+                <span class="n">stages</span><span class="o">.</span><span class="n">load_module_stages</span><span class="p">(</span><span class="n">mod</span><span class="p">)</span>
+        <span class="n">factory</span> <span class="o">=</span> <span class="n">PipelineFactory</span><span class="p">(</span><span class="n">stages</span><span class="p">)</span>
+        <span class="n">pipeline</span> <span class="o">=</span> <span class="n">factory</span><span class="p">(</span><span class="n">scp_config</span><span class="p">)</span>
+
+        <span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;start_chunk_time&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="n">work_unit</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="s">&#39;start_count&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="n">pipeline</span><span class="o">.</span><span class="n">_process_task</span><span class="p">(</span><span class="n">work_unit</span><span class="p">)</span>
+
+</div>
+<div class="viewcode-block" id="rejester_terminate_function"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._rejester.rejester_terminate_function">[docs]</a><span class="k">def</span> <span class="nf">rejester_terminate_function</span><span class="p">(</span><span class="n">work_unit</span><span class="p">):</span>
+    <span class="k">pass</span>
+
+</div>
+<span class="k">class</span> <span class="nc">to_work_units</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Writer that puts references into rejester&#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;to_work_units&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">to_kvlayer</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t_path</span><span class="p">,</span> <span class="n">name_info</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="n">work_unit_specs</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Chunk</span><span class="p">(</span><span class="n">t_path</span><span class="p">):</span>
+            <span class="n">si_key</span> <span class="o">=</span> <span class="n">key_for_stream_item</span><span class="p">(</span><span class="n">si</span><span class="p">)</span>
+            <span class="n">work_unit_specs</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="p">(</span><span class="n">si_key</span><span class="p">,</span> <span class="p">{},</span> <span class="p">{})</span> <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">work_unit_specs</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

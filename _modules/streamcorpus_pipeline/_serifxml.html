@@ -1,0 +1,244 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._serifxml &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._serifxml</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;:class:`from_serifxml` pipeline reader.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2014 Diffeo, Inc.</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">time</span>
+
+<span class="kn">from</span> <span class="nn">lxml</span> <span class="kn">import</span> <span class="n">etree</span>
+
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="n">date_in_file_name_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="s">&#39;^(?P&lt;year&gt;(19|20)\d{2})(?P&lt;month&gt;\d{2})(?P&lt;day&gt;\d{2})(-|_|.)&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="from_serifxml"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._serifxml.from_serifxml">[docs]</a><span class="k">class</span> <span class="nc">from_serifxml</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Read a Serif XML intermediate file as the input to the pipeline.</span>
+
+<span class="sd">    This is a specialized reader for unusual circumstances; you will</span>
+<span class="sd">    still need to run :class:`~streamcorpus_pipeline._serif.serif`</span>
+<span class="sd">    with special settings to complete the tagging.  This expects to</span>
+<span class="sd">    find serifxml flat files in a directory and creates a</span>
+<span class="sd">    :class:`~streamcorpus.Tagging` with</span>
+<span class="sd">    :attr:`~streamcorpus.Tagging.raw_tagging` holding the serifxml</span>
+<span class="sd">    string.  This :class:`~streamcorpus.Tagging` is stored in</span>
+<span class="sd">    :attr:`~streamcorpus.StreamItem.body.taggings`.</span>
+
+<span class="sd">    This also fills in :attr:`~streamcorpus.ContentItem.raw` field.</span>
+
+<span class="sd">    This has one configuration option, which can usually be left at</span>
+<span class="sd">    its default value:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        streamcorpus_pipeline:</span>
+<span class="sd">          from_serifxml:</span>
+<span class="sd">            tagger_id: serif</span>
+
+<span class="sd">    `tagger_id` is the tagger name in the generated</span>
+<span class="sd">    :class:`~streamcorpus.StreamItem`.</span>
+
+<span class="sd">    To obtain :attr:`~streamcorpus.StreamItem.body.sentences`, one</span>
+<span class="sd">    must run Serif in the special `read_serifxml` mode:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        streamcorpus_pipeline:</span>
+<span class="sd">          third_dir_path: /third</span>
+<span class="sd">          tmp_dir_path: tmp</span>
+<span class="sd">          reader: from_serifxml</span>
+<span class="sd">          incremental_transforms:</span>
+<span class="sd">          - language</span>
+<span class="sd">          - guess_media_type</span>
+<span class="sd">          - clean_html</span>
+<span class="sd">          - clean_visible</span>
+<span class="sd">          - title</span>
+<span class="sd">          batch_transforms:</span>
+<span class="sd">          - serif</span>
+<span class="sd">          language:</span>
+<span class="sd">            force:</span>
+<span class="sd">              name: English</span>
+<span class="sd">              code: en</span>
+<span class="sd">          guess_media_type:</span>
+<span class="sd">            fallback_media_type: text/plain</span>
+<span class="sd">          serif:</span>
+<span class="sd">            path_in_third: serif/serif-latest</span>
+<span class="sd">            serif_exe: bin/x86_64/Serif</span>
+<span class="sd">            par: streamcorpus_read_serifxml</span>
+<span class="sd">            par_additions:</span>
+<span class="sd">              streamcorpus_read_serifxml:</span>
+<span class="sd">              - &quot;# example additional line&quot;</span>
+<span class="sd">          writer: to_local_chunks</span>
+<span class="sd">          to_local_chunks:</span>
+<span class="sd">            output_type: otherdir</span>
+<span class="sd">            output_path: test_output</span>
+<span class="sd">            output_name: &quot;%(input_fname)s&quot;</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;from_serifxml&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;tagger_id&#39;</span><span class="p">:</span> <span class="s">&#39;serif&#39;</span><span class="p">,</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="c"># Read in the entire contents as text; we will need to</span>
+        <span class="c"># save it away later</span>
+        <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">i_str</span><span class="p">,</span> <span class="s">&#39;r&#39;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+            <span class="n">serifxml</span> <span class="o">=</span> <span class="n">f</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+
+        <span class="n">fname</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span>
+        <span class="n">stream_time</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="n">date_m</span> <span class="o">=</span> <span class="n">date_in_file_name_re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">fname</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">date_m</span><span class="p">:</span>
+            <span class="n">year</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">date_m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;year&#39;</span><span class="p">))</span>
+            <span class="n">month</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">date_m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;month&#39;</span><span class="p">))</span>
+            <span class="n">day</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">date_m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;day&#39;</span><span class="p">))</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">stream_time</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">make_stream_time</span><span class="p">(</span>
+                    <span class="n">zulu_timestamp</span> <span class="o">=</span> <span class="s">&#39;</span><span class="si">%d</span><span class="s">-</span><span class="si">%02d</span><span class="s">-</span><span class="si">%02d</span><span class="s">T00:00:01.000000Z&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">year</span><span class="p">,</span> <span class="n">month</span><span class="p">,</span> <span class="n">day</span><span class="p">))</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s">&#39;trapped failed parsing of file name to make stream_time&#39;</span><span class="p">,</span>
+                            <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="n">stream_time</span> <span class="o">=</span> <span class="bp">None</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">stream_time</span><span class="p">:</span>
+            <span class="c">## fall back to using the present moment on this system</span>
+            <span class="n">epoch_ticks</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="c">### NOT IN THE SERIFXML FILE</span>
+            <span class="n">stream_time</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">make_stream_time</span><span class="p">(</span><span class="n">epoch_ticks</span><span class="o">=</span><span class="n">epoch_ticks</span><span class="p">)</span>
+
+        <span class="c"># Parse the XML</span>
+        <span class="n">root</span> <span class="o">=</span> <span class="n">etree</span><span class="o">.</span><span class="n">fromstring</span><span class="p">(</span><span class="n">serifxml</span><span class="p">)</span>
+
+        <span class="c"># Get some key parts</span>
+        <span class="n">doc_id</span> <span class="o">=</span> <span class="n">root</span><span class="o">.</span><span class="n">xpath</span><span class="p">(</span><span class="s">&#39;string(/SerifXML/Document/@docid)&#39;</span><span class="p">)</span>
+        <span class="n">source</span> <span class="o">=</span> <span class="n">root</span><span class="o">.</span><span class="n">xpath</span><span class="p">(</span><span class="s">&#39;string(/SerifXML/Document/@source_type)&#39;</span><span class="p">)</span>
+        <span class="n">raw</span> <span class="o">=</span> <span class="n">root</span><span class="o">.</span><span class="n">xpath</span><span class="p">(</span><span class="s">&#39;string(/SerifXML/Document/OriginalText/Contents)&#39;</span><span class="p">)</span>
+
+        <span class="c"># Build the streamitem</span>
+        <span class="n">tagging</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Tagging</span><span class="p">(</span>
+            <span class="n">tagger_id</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tagger_id&#39;</span><span class="p">],</span>
+            <span class="n">raw_tagging</span><span class="o">=</span><span class="n">serifxml</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">body</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">ContentItem</span><span class="p">(</span>
+            <span class="n">raw</span><span class="o">=</span><span class="n">raw</span><span class="p">,</span>
+            <span class="n">taggings</span><span class="o">=</span><span class="p">{</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;tagger_id&#39;</span><span class="p">]:</span> <span class="n">tagging</span><span class="p">,</span>
+            <span class="p">},</span>
+        <span class="p">)</span>
+        <span class="n">si</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">StreamItem</span><span class="p">(</span>
+            <span class="n">version</span><span class="o">=</span><span class="n">streamcorpus</span><span class="o">.</span><span class="n">Versions</span><span class="o">.</span><span class="n">v0_3_0</span><span class="p">,</span>
+            <span class="n">doc_id</span><span class="o">=</span><span class="n">doc_id</span><span class="p">,</span>
+            <span class="n">abs_url</span><span class="o">=</span><span class="n">fname</span><span class="p">,</span>
+            <span class="n">source</span><span class="o">=</span><span class="n">source</span><span class="p">,</span>
+            <span class="n">body</span><span class="o">=</span><span class="n">body</span><span class="p">,</span>
+            <span class="n">stream_id</span><span class="o">=</span><span class="s">&#39;</span><span class="si">%d</span><span class="s">-</span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">stream_time</span><span class="o">.</span><span class="n">epoch_ticks</span><span class="p">,</span> <span class="n">doc_id</span><span class="p">),</span>
+            <span class="n">stream_time</span><span class="o">=</span><span class="n">stream_time</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">yield</span> <span class="n">si</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

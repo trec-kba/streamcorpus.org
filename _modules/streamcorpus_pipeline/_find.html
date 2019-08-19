@@ -1,0 +1,216 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._find &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._find</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">KBA pipeline transform that holds a list of known stream_ids and</span>
+<span class="sd">prints lines to a file of the form:</span>
+
+<span class="sd">stream_id,i_str</span>
+
+<span class="sd">where i_str is the input task path for the chunk containing the</span>
+<span class="sd">stream_id.</span>
+
+<span class="sd">This software is released under an MIT/X11 open source license.</span>
+
+<span class="sd">Copyright 2012-2014 Diffeo, Inc.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">random</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">uuid</span>
+
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<div class="viewcode-block" id="find"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._find.find">[docs]</a><span class="k">class</span> <span class="nc">find</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;find&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;filter&#39;</span><span class="p">:</span> <span class="bp">True</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">find</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stream_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;list_of_stream_ids_path&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">():</span>
+            <span class="n">source</span><span class="p">,</span> <span class="n">stream_id</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_stream_ids</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">stream_id</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;loaded </span><span class="si">%d</span><span class="s"> stream_ids, e.g. </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stream_ids</span><span class="p">),</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_stream_ids</span><span class="p">)[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="n">_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;dump_path&#39;</span><span class="p">],</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid1</span><span class="p">())</span> <span class="o">+</span> <span class="s">&#39;.txt&#39;</span><span class="p">)</span>
+        <span class="n">_parent_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">_parent_dir</span><span class="p">):</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">_parent_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dump_fh</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">_path</span><span class="p">,</span> <span class="s">&#39;wb&#39;</span><span class="p">)</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">_special_chunks</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stream_ids</span><span class="p">:</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">_special_chunks</span><span class="o">.</span><span class="n">add</span><span class="p">(</span> <span class="n">context</span><span class="p">[</span><span class="s">&#39;i_str&#39;</span><span class="p">]</span> <span class="p">)</span>
+
+            <span class="n">rec</span> <span class="o">=</span> <span class="p">[</span><span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">context</span><span class="p">[</span><span class="s">&#39;i_str&#39;</span><span class="p">]]</span>
+
+            <span class="n">line</span> <span class="o">=</span> <span class="s">&#39;</span><span class="se">\t</span><span class="s">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rec</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_dump_fh</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_dump_fh</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+            <span class="c">## pass through all stream_ids that match</span>
+            <span class="k">return</span> <span class="n">si</span>
+
+        <span class="k">elif</span> <span class="n">context</span><span class="p">[</span><span class="s">&#39;i_str&#39;</span><span class="p">]</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_special_chunks</span> <span class="ow">and</span> \
+                <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;camouflage_fraction&#39;</span><span class="p">):</span>
+            <span class="c">## for chunks that contain found stream_id, we can pass a</span>
+            <span class="c">## fraction of the remaining StreamItems as camouflage.</span>
+            <span class="k">return</span> <span class="n">si</span>
+
+        <span class="k">elif</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;filter&#39;</span><span class="p">]:</span>
+            <span class="c">## even it isn&#39;t one of the special stream_ids, we might</span>
+            <span class="c">## still let it three if config[&#39;filter&#39;] == False</span>
+            <span class="k">return</span> <span class="n">si</span>
+</div>
+<div class="viewcode-block" id="find_doc_ids"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._find.find_doc_ids">[docs]</a><span class="k">class</span> <span class="nc">find_doc_ids</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;find_doc_ids&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span> <span class="s">&#39;filter&#39;</span><span class="p">:</span> <span class="bp">True</span> <span class="p">}</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">config</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">find_doc_ids</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">config</span> <span class="o">=</span> <span class="n">config</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_doc_ids</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="nb">open</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;list_of_doc_ids_path&#39;</span><span class="p">])</span><span class="o">.</span><span class="n">read</span><span class="p">()</span><span class="o">.</span><span class="n">splitlines</span><span class="p">():</span>
+            <span class="n">doc_id</span> <span class="o">=</span> <span class="n">line</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_doc_ids</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">doc_id</span><span class="o">.</span><span class="n">strip</span><span class="p">())</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">critical</span><span class="p">(</span><span class="s">&#39;loaded </span><span class="si">%d</span><span class="s"> doc_ids, e.g. </span><span class="si">%s</span><span class="s">&#39;</span> <span class="o">%</span> <span class="p">(</span>
+                <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_doc_ids</span><span class="p">),</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_doc_ids</span><span class="p">)[</span><span class="mi">0</span><span class="p">]))</span>
+        <span class="n">_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;dump_path&#39;</span><span class="p">],</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">())</span> <span class="o">+</span> <span class="s">&#39;.txt&#39;</span><span class="p">)</span>
+        <span class="n">_parent_dir</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">dirname</span><span class="p">(</span><span class="n">_path</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">_parent_dir</span><span class="p">):</span>
+            <span class="n">os</span><span class="o">.</span><span class="n">makedirs</span><span class="p">(</span><span class="n">_parent_dir</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dump_fh</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">_path</span><span class="p">,</span> <span class="s">&#39;wb&#39;</span><span class="p">)</span>
+        
+        <span class="bp">self</span><span class="o">.</span><span class="n">_special_chunks</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">si</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+
+        <span class="k">assert</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s">&#39;-&#39;</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span> <span class="o">==</span> <span class="n">si</span><span class="o">.</span><span class="n">doc_id</span><span class="p">,</span> \
+            <span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">si</span><span class="o">.</span><span class="n">doc_id</span><span class="p">,</span> <span class="n">context</span><span class="p">[</span><span class="s">&#39;i_str&#39;</span><span class="p">])</span>
+
+        <span class="k">if</span> <span class="n">si</span><span class="o">.</span><span class="n">doc_id</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_doc_ids</span><span class="p">:</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">_special_chunks</span><span class="o">.</span><span class="n">add</span><span class="p">(</span> <span class="n">context</span><span class="p">[</span><span class="s">&#39;i_str&#39;</span><span class="p">]</span> <span class="p">)</span>
+
+            <span class="n">rec</span> <span class="o">=</span> <span class="p">[</span><span class="n">si</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">context</span><span class="p">[</span><span class="s">&#39;i_str&#39;</span><span class="p">]]</span>
+
+            <span class="n">line</span> <span class="o">=</span> <span class="s">&#39;</span><span class="se">\t</span><span class="s">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">rec</span><span class="p">)</span> <span class="o">+</span> <span class="s">&#39;</span><span class="se">\n</span><span class="s">&#39;</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_dump_fh</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">line</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_dump_fh</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+            <span class="c">## pass through all stream_ids that match</span>
+            <span class="k">return</span> <span class="n">si</span>
+
+        <span class="k">elif</span> <span class="n">context</span><span class="p">[</span><span class="s">&#39;i_str&#39;</span><span class="p">]</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_special_chunks</span> <span class="ow">and</span> \
+                <span class="n">random</span><span class="o">.</span><span class="n">random</span><span class="p">()</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;camouflage_fraction&#39;</span><span class="p">):</span>
+            <span class="c">## for chunks that contain found stream_id, we can pass a</span>
+            <span class="c">## fraction of the remaining StreamItems as camouflage.</span>
+            <span class="k">return</span> <span class="n">si</span>
+
+        <span class="k">elif</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="p">[</span><span class="s">&#39;filter&#39;</span><span class="p">]:</span>
+            <span class="c">## even it isn&#39;t one of the special stream_ids, we might</span>
+            <span class="c">## still let it three if config[&#39;filter&#39;] == False</span>
+            <span class="k">return</span> <span class="n">si</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

@@ -1,0 +1,375 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._clean_html &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._clean_html</h1><div class="highlight"><pre>
+<span class="c">#!/usr/bin/env python</span>
+<span class="sd">&#39;&#39;&#39;Convert raw text into cleaned HTML.</span>
+
+<span class="sd">.. This software is released under an MIT/X11 open source license.</span>
+<span class="sd">   Copyright 2012-2015 Diffeo, Inc.</span>
+
+<span class="sd">.. autoclass:: clean_html</span>
+
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span> <span class="nn">__future__</span> <span class="kn">import</span> <span class="n">absolute_import</span>
+<span class="kn">import</span> <span class="nn">logging</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">import</span> <span class="nn">string</span>
+
+<span class="kn">import</span> <span class="nn">html5lib</span>
+<span class="kn">import</span> <span class="nn">lxml.etree</span>
+<span class="kn">import</span> <span class="nn">lxml.html</span>
+<span class="kn">import</span> <span class="nn">lxml.html.clean</span>
+<span class="kn">import</span> <span class="nn">lxml.html.soupparser</span>
+<span class="kn">from</span> <span class="nn">BeautifulSoup</span> <span class="kn">import</span> <span class="n">UnicodeDammit</span>
+
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.emails</span> <span class="kn">import</span> <span class="n">fix_emails</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__name__</span><span class="p">)</span>
+
+<span class="n">encoding_re</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span>
+    <span class="sd">&#39;&#39;&#39;(?P&lt;start_xml&gt;([^&lt;]|\n)*?\&lt;\?xml[^&gt;]*)&#39;&#39;&#39;</span>
+    <span class="sd">&#39;&#39;&#39;(?P&lt;encoding&gt;encoding=.*?)(?P&lt;remainder&gt;(\s|\?\&gt;)(.|\n)*)&#39;&#39;&#39;</span><span class="p">,</span>
+    <span class="n">re</span><span class="o">.</span><span class="n">I</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">drop_invalid_and_upper_utf8_chars</span><span class="p">(</span><span class="n">possibly_invalid_string</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Clean unexpected Unicode characters, including non-BMP.</span>
+
+<span class="sd">    Returns a copy of `possibly_invalid_string` with the following</span>
+<span class="sd">    replaced by space (U+0020): ASCII control characters other than</span>
+<span class="sd">    tab, carriage return, and newline; reserved code points for</span>
+<span class="sd">    surrogate pairs; invalid characters U+FFFE and U+FFFF; and</span>
+<span class="sd">    supplementary characters U+10000 and higher.</span>
+
+<span class="sd">    :param unicode possibly_invalid_string: string to clean</span>
+<span class="sd">    :return: cleaned string</span>
+<span class="sd">    :returntype: :class:`unicode`</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s">ur&#39;[^\t\r\n\u0020-\ud7ff\ue000-\ufffd]&#39;</span><span class="p">,</span> <span class="s">u&#39; &#39;</span><span class="p">,</span>
+                  <span class="n">possibly_invalid_string</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">force_unicode</span><span class="p">(</span><span class="n">raw</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Try really really hard to get a Unicode copy of a string.</span>
+
+<span class="sd">    First try :class:`BeautifulSoup.UnicodeDammit` to try to force</span>
+<span class="sd">    to Unicode; if that fails, assume UTF-8 encoding, and ignore</span>
+<span class="sd">    all errors.</span>
+
+<span class="sd">    :param str raw: string to coerce</span>
+<span class="sd">    :return: Unicode approximation of `raw`</span>
+<span class="sd">    :returntype: :class:`unicode`</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">converted</span> <span class="o">=</span> <span class="n">UnicodeDammit</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">isHTML</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">converted</span><span class="o">.</span><span class="n">unicode</span><span class="p">:</span>
+        <span class="n">converted</span><span class="o">.</span><span class="n">unicode</span> <span class="o">=</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="s">&#39;utf8&#39;</span><span class="p">,</span> <span class="n">errors</span><span class="o">=</span><span class="s">&#39;ignore&#39;</span><span class="p">)</span>
+
+    <span class="n">encoding_m</span> <span class="o">=</span> <span class="n">encoding_re</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">converted</span><span class="o">.</span><span class="n">unicode</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">encoding_m</span><span class="p">:</span>
+        <span class="n">converted</span><span class="o">.</span><span class="n">unicode</span> <span class="o">=</span> \
+            <span class="n">encoding_m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;start_xml&#39;</span><span class="p">)</span> <span class="o">+</span> \
+            <span class="n">encoding_m</span><span class="o">.</span><span class="n">group</span><span class="p">(</span><span class="s">&#39;remainder&#39;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">converted</span><span class="o">.</span><span class="n">unicode</span>
+
+
+<span class="k">def</span> <span class="nf">make_clean_html</span><span class="p">(</span><span class="n">raw</span><span class="p">,</span> <span class="n">stream_item</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Get a clean text representation of presumed HTML.</span>
+
+<span class="sd">    Treat `raw` as though it is HTML, even if we have no idea what it</span>
+<span class="sd">    really is, and attempt to get a properly formatted HTML document</span>
+<span class="sd">    with all HTML-escaped characters converted to their unicode.</span>
+
+<span class="sd">    This is called below by the `clean_html` transform stage, which</span>
+<span class="sd">    interprets MIME-type.  If `character_encoding` is not provided,</span>
+<span class="sd">    and `stream_item` is provided, then this falles back to</span>
+<span class="sd">    :attr:`streamcorpus.StreamItem.body.encoding`.</span>
+
+<span class="sd">    :param str raw: raw text to clean up</span>
+<span class="sd">    :param stream_item: optional stream item with encoding metadata</span>
+<span class="sd">    :type stream_item: :class:`streamcorpus.StreamItem`</span>
+<span class="sd">    :returns: UTF-8-encoded byte string of cleaned HTML text</span>
+<span class="sd">    :returntype: :class:`str`</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="c"># Fix emails by protecting the &lt;,&gt; from HTML</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="n">fix_emails</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+    <span class="n">raw_decoded</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">if</span> <span class="n">encoding</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">raw_decoded</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">encoding</span><span class="p">)</span>
+        <span class="k">except</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;encoding=</span><span class="si">%r</span><span class="s"> provided, but failed&#39;</span><span class="p">,</span> 
+                        <span class="n">encoding</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+            <span class="n">raw_decoded</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">if</span> <span class="n">raw_decoded</span> <span class="ow">is</span> <span class="bp">None</span> <span class="ow">and</span> <span class="n">stream_item</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span> <span class="ow">and</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">encoding</span><span class="p">:</span>
+            <span class="n">encoding</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">encoding</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">raw_decoded</span> <span class="o">=</span> <span class="n">raw</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">encoding</span><span class="p">)</span>
+            <span class="k">except</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;stream_item.body.encoding=</span><span class="si">%r</span><span class="s"> provided, but failed&#39;</span><span class="p">,</span> 
+                            <span class="n">encoding</span><span class="p">,</span> <span class="n">exc_info</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+                <span class="n">raw_decoded</span> <span class="o">=</span> <span class="bp">None</span>
+
+    <span class="k">if</span> <span class="n">raw_decoded</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+        <span class="c"># give up on decoding it</span>
+        <span class="n">raw_decoded</span> <span class="o">=</span> <span class="n">raw</span>
+
+    <span class="c"># default attempt uses vanilla lxml.html</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">root</span> <span class="o">=</span> <span class="n">lxml</span><span class="o">.</span><span class="n">html</span><span class="o">.</span><span class="n">document_fromstring</span><span class="p">(</span><span class="n">raw_decoded</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">ValueError</span><span class="p">,</span> <span class="n">exc</span><span class="p">:</span>
+        <span class="k">if</span> <span class="s">&#39;with encoding declaration&#39;</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">exc</span><span class="p">):</span>
+            <span class="n">root</span> <span class="o">=</span> <span class="n">lxml</span><span class="o">.</span><span class="n">html</span><span class="o">.</span><span class="n">document_fromstring</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span>
+
+    <span class="c"># While we have the document parsed as a DOM, let&#39;s strip attributes.</span>
+    <span class="c"># (The HTML cleaner seems to only support whitelisting attributes.</span>
+    <span class="c"># As of now, we just want to blacklist a few.)</span>
+    <span class="n">lxml</span><span class="o">.</span><span class="n">etree</span><span class="o">.</span><span class="n">strip_attributes</span><span class="p">(</span><span class="n">root</span><span class="p">,</span> <span class="s">&#39;class&#39;</span><span class="p">,</span> <span class="s">&#39;id&#39;</span><span class="p">)</span>
+
+    <span class="c"># if that worked, then we will be able to generate a</span>
+    <span class="c"># valid HTML string</span>
+    <span class="n">fixed_html</span> <span class="o">=</span> <span class="n">lxml</span><span class="o">.</span><span class="n">html</span><span class="o">.</span><span class="n">tostring</span><span class="p">(</span><span class="n">root</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="nb">unicode</span><span class="p">)</span>
+
+    <span class="c"># remove any ^M characters</span>
+    <span class="n">fixed_html</span> <span class="o">=</span> <span class="n">string</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="n">fixed_html</span><span class="p">,</span> <span class="s">&#39;</span><span class="se">\r</span><span class="s">&#39;</span><span class="p">,</span> <span class="s">&#39; &#39;</span><span class="p">)</span>
+
+    <span class="c"># We drop utf8 characters that are above 0xFFFF as</span>
+    <span class="c"># Lingpipe seems to be doing the wrong thing with them.</span>
+    <span class="n">fixed_html</span> <span class="o">=</span> <span class="n">drop_invalid_and_upper_utf8_chars</span><span class="p">(</span><span class="n">fixed_html</span><span class="p">)</span>
+
+    <span class="c"># construct a Cleaner that removes any ``&lt;script&gt;`` tags,</span>
+    <span class="c"># Javascript, like an ``onclick`` attribute, comments, style</span>
+    <span class="c"># tags or attributes, ``&lt;link&gt;`` tags</span>
+    <span class="n">cleaner</span> <span class="o">=</span> <span class="n">lxml</span><span class="o">.</span><span class="n">html</span><span class="o">.</span><span class="n">clean</span><span class="o">.</span><span class="n">Cleaner</span><span class="p">(</span>
+        <span class="n">scripts</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">javascript</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span>
+        <span class="n">comments</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span>
+        <span class="c"># do not remove &lt;html&gt; &lt;head&gt; &lt;title&gt; etc</span>
+        <span class="n">page_structure</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span>
+        <span class="n">remove_tags</span><span class="o">=</span><span class="p">[</span><span class="s">&#39;base&#39;</span><span class="p">],</span>
+        <span class="n">style</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">links</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+
+    <span class="c"># now get the really sanitized HTML</span>
+    <span class="n">_clean_html</span> <span class="o">=</span> <span class="n">cleaner</span><span class="o">.</span><span class="n">clean_html</span><span class="p">(</span><span class="n">fixed_html</span><span class="p">)</span>
+
+    <span class="c"># generate pretty HTML in utf-8</span>
+    <span class="n">_clean_html</span> <span class="o">=</span> <span class="n">lxml</span><span class="o">.</span><span class="n">html</span><span class="o">.</span><span class="n">tostring</span><span class="p">(</span>
+        <span class="n">lxml</span><span class="o">.</span><span class="n">html</span><span class="o">.</span><span class="n">document_fromstring</span><span class="p">(</span><span class="n">_clean_html</span><span class="p">),</span>
+        <span class="n">method</span><span class="o">=</span><span class="s">&#39;html&#39;</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s">&#39;utf-8&#39;</span><span class="p">,</span>
+        <span class="n">pretty_print</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span>
+        <span class="c"># include_meta_content_type=True</span>
+        <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">uniform_html</span><span class="p">(</span><span class="n">_clean_html</span><span class="p">)</span>
+
+
+<span class="k">def</span> <span class="nf">uniform_html</span><span class="p">(</span><span class="n">html</span><span class="p">):</span>
+    <span class="n">doc</span> <span class="o">=</span> <span class="n">html5lib</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">html</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="s">&#39;utf-8&#39;</span><span class="p">))</span>
+    <span class="n">config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;omit_optional_tags&#39;</span><span class="p">:</span> <span class="bp">False</span><span class="p">,</span>
+        <span class="s">&#39;encoding&#39;</span><span class="p">:</span> <span class="s">&#39;utf-8&#39;</span><span class="p">,</span>
+        <span class="s">&#39;quote_attr_values&#39;</span><span class="p">:</span> <span class="bp">True</span><span class="p">,</span>
+    <span class="p">}</span>
+    <span class="k">return</span> <span class="n">html5lib</span><span class="o">.</span><span class="n">serializer</span><span class="o">.</span><span class="n">serialize</span><span class="p">(</span><span class="n">doc</span><span class="p">,</span> <span class="o">**</span><span class="n">config</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="clean_html"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._clean_html.clean_html">[docs]</a><span class="k">class</span> <span class="nc">clean_html</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;Create `body.clean_html` from `body.raw`.</span>
+
+<span class="sd">    Configuration options:</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        require_language_code: en</span>
+
+<span class="sd">    If set, only work on stream items whose language code is the</span>
+<span class="sd">    specified value; pass others on unchanged.  Defaults to unset.</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        include_language_codes: [en, &quot;&quot;]</span>
+
+<span class="sd">    If set to a non-empty list, only work on stream items whose</span>
+<span class="sd">    language code is one of the specified values; pass others on</span>
+<span class="sd">    unchanged.  Defaults to empty list (process all languages).</span>
+
+<span class="sd">    .. code-block:: yaml</span>
+
+<span class="sd">        include_mime_types: [&#39;text/html&#39;]</span>
+
+<span class="sd">    If set to a non-empty list, only work on stream items whose</span>
+<span class="sd">    mime type matches one of the specified values. If set to an</span>
+<span class="sd">    empty list, then all stream items (assuming they match the</span>
+<span class="sd">    above language criteria) will have ``clean_html`` populated</span>
+<span class="sd">    from ``body.raw``. Default to list of just ``text/html``.</span>
+
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;clean_html&#39;</span>
+    <span class="n">default_config</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="s">&#39;include_language_codes&#39;</span><span class="p">:</span> <span class="p">[],</span>
+        <span class="s">&#39;include_mime_types&#39;</span><span class="p">:</span> <span class="p">[</span><span class="s">&#39;text/html&#39;</span><span class="p">],</span>
+    <span class="p">}</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">clean_html</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">require_code</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;require_language_code&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">codes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;include_language_codes&#39;</span><span class="p">,</span> <span class="p">[])</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">include_mime_types</span> <span class="o">=</span> \
+            <span class="p">[</span><span class="n">s</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+             <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s">&#39;include_mime_types&#39;</span><span class="p">,</span> <span class="p">[</span><span class="s">&#39;text/html&#39;</span><span class="p">])]</span>
+
+    <span class="k">def</span> <span class="nf">is_matching_mime_type</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mime_type</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;This implements the MIME-type matching logic for deciding whether</span>
+<span class="sd">        to run `make_clean_html`</span>
+
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">include_mime_types</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">True</span>
+        <span class="k">if</span> <span class="n">mime_type</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">False</span>
+        <span class="n">mime_type</span> <span class="o">=</span> <span class="n">mime_type</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="c"># NB: startswith is necessary here, because encodings are</span>
+        <span class="c"># often appended to HTTP header Content-Type</span>
+        <span class="k">return</span> <span class="nb">any</span><span class="p">(</span><span class="n">mime_type</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">mt</span><span class="p">)</span> <span class="k">for</span> <span class="n">mt</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">include_mime_types</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">stream_item</span><span class="p">,</span> <span class="n">context</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;dropping stream_item </span><span class="si">%s</span><span class="s"> with missing body&#39;</span><span class="p">,</span>
+                        <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+            <span class="k">return</span> <span class="bp">None</span>
+
+        <span class="n">lang</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">language</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">lang</span> <span class="ow">and</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">require_code</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">codes</span><span class="p">):</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warn</span><span class="p">(</span><span class="s">&#39;skipping stream_item </span><span class="si">%s</span><span class="s"> with missing language &#39;</span>
+                        <span class="s">&#39;(did you run the &quot;language&quot; transform?)&#39;</span><span class="p">,</span>
+                        <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">stream_item</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">require_code</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">require_code</span> <span class="o">!=</span> <span class="n">lang</span><span class="o">.</span><span class="n">code</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;skipping stream_item </span><span class="si">%s</span><span class="s"> with language </span><span class="si">%r</span><span class="s">, &#39;</span>
+                         <span class="s">&#39;not required language </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                         <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span>
+                         <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">language</span><span class="o">.</span><span class="n">code</span><span class="p">,</span>
+                         <span class="bp">self</span><span class="o">.</span><span class="n">require_code</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">stream_item</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">codes</span> <span class="ow">and</span> <span class="n">lang</span><span class="o">.</span><span class="n">code</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">codes</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;skipping stream_item </span><span class="si">%s</span><span class="s"> with language </span><span class="si">%r</span><span class="s">, &#39;</span>
+                         <span class="s">&#39;not one of included codes </span><span class="si">%r</span><span class="s">&#39;</span><span class="p">,</span>
+                         <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">lang</span><span class="o">.</span><span class="n">code</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">codes</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">is_matching_mime_type</span><span class="p">(</span><span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">media_type</span><span class="p">):</span>
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_html</span> <span class="o">=</span> <span class="n">make_clean_html</span><span class="p">(</span>
+                <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">raw</span><span class="p">,</span>
+                <span class="n">stream_item</span><span class="o">=</span><span class="n">stream_item</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s">&#39;skipping stream_item </span><span class="si">%s</span><span class="s"> with unrecognized &#39;</span>
+                         <span class="s">&#39;media_type </span><span class="si">%r</span><span class="s"> (allowed mime types: </span><span class="si">%r</span><span class="s">)&#39;</span><span class="p">,</span>
+                         <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_id</span><span class="p">,</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">media_type</span><span class="p">,</span>
+                         <span class="bp">self</span><span class="o">.</span><span class="n">include_mime_types</span> <span class="ow">or</span> <span class="s">&#39;EVERYTHING&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">stream_item</span></div>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>

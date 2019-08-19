@@ -1,0 +1,230 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>streamcorpus_pipeline._john_smith &mdash; streamcorpus-pipeline 0.7.10.dev1 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/classic.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '0.7.10.dev1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="streamcorpus-pipeline 0.7.10.dev1 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for streamcorpus_pipeline._john_smith</h1><div class="highlight"><pre>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Example of how to transform a corpus into the streamcorpus format.</span>
+
+<span class="sd">This uses the John Smith corpus as a test data set for illustration.</span>
+<span class="sd">The John Smith corpus is 197 articles from the New York Times gathered</span>
+<span class="sd">by Amit Bagga and Breck Baldwin &quot;Entity-Based Cross-Document</span>
+<span class="sd">Coreferencing Using the Vector Space Model&quot;</span>
+<span class="sd">http://acl.ldc.upenn.edu/P/P98/P98-1012.pdf</span>
+
+<span class="sd">The corpus consists of 35 directories with files inside each</span>
+<span class="sd">directory.  The documents in each directory all refer to the same</span>
+<span class="sd">entity named John Smith, so the directory names are document-level</span>
+<span class="sd">labels.  First, we store these doc-level labels and then later, when</span>
+<span class="sd">we have reader output from LingPipe or Stanford CoreNLP, we coerce</span>
+<span class="sd">these doc-level labels into labels on individual in-doc coref chains</span>
+<span class="sd">that contain &#39;john&#39; and &#39;smith&#39; as substrings.</span>
+
+<span class="sd">The original data is stored in data/john-smith/original and the output</span>
+<span class="sd">of this file is in data/john-smith/john-smith.sc</span>
+
+<span class="sd">This software is released under an MIT/X11 open source license.</span>
+
+<span class="sd">Copyright 2012-2013 Diffeo, Inc.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+
+<span class="c">## this assumes that streamcorpus has been installed</span>
+<span class="kn">import</span> <span class="nn">streamcorpus</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline._exceptions</span> <span class="kn">import</span> <span class="n">PipelineBaseException</span>
+<span class="kn">from</span> <span class="nn">streamcorpus_pipeline.stages</span> <span class="kn">import</span> <span class="n">Configured</span>
+
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">import</span> <span class="nn">hashlib</span>
+
+<div class="viewcode-block" id="john_smith"><a class="viewcode-back" href="../../sphinx-docs/streamcorpus_pipeline.html#streamcorpus_pipeline._john_smith.john_smith">[docs]</a><span class="k">class</span> <span class="nc">john_smith</span><span class="p">(</span><span class="n">Configured</span><span class="p">):</span>
+    <span class="n">config_name</span> <span class="o">=</span> <span class="s">&#39;john_smith&#39;</span>
+    <span class="c"># no other config</span>
+
+    <span class="k">def</span> <span class="nf">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">i_str</span><span class="p">):</span>
+        <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns a kba.pipeline &quot;reader&quot; that generates a single</span>
+<span class="sd">        streamcorpus.Chunk file containing the John Smith corpus.</span>
+
+<span class="sd">        :returns function:</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="n">generate_john_smith_chunk</span><span class="p">(</span><span class="n">i_str</span><span class="p">)</span>
+</div>
+<span class="k">def</span> <span class="nf">generate_john_smith_chunk</span><span class="p">(</span><span class="n">path_to_original</span><span class="p">):</span>
+    <span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    This _looks_ like a Chunk only in that it generates StreamItem</span>
+<span class="sd">    instances when iterated upon.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="c">## Every StreamItem has a stream_time property.  It usually comes</span>
+    <span class="c">## from the document creation time.  Here, we assume the JS corpus</span>
+    <span class="c">## was created at one moment at the end of 1998:</span>
+    <span class="n">creation_time</span> <span class="o">=</span> <span class="s">&#39;1998-12-31T23:59:59.999999Z&#39;</span>
+    <span class="n">correct_time</span> <span class="o">=</span> <span class="mi">915148799</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isabs</span><span class="p">(</span><span class="n">path_to_original</span><span class="p">):</span>
+        <span class="n">path_to_original</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">getcwd</span><span class="p">(),</span> <span class="n">path_to_original</span><span class="p">)</span>
+
+    <span class="c">## iterate over the files in the 35 input directories</span>
+    <span class="k">for</span> <span class="n">label_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">35</span><span class="p">):</span>
+
+        <span class="n">dir_path</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">path_to_original</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">label_id</span><span class="p">))</span>
+        <span class="n">fnames</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="n">dir_path</span><span class="p">)</span>
+        <span class="n">fnames</span><span class="o">.</span><span class="n">sort</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">fname</span> <span class="ow">in</span> <span class="n">fnames</span><span class="p">:</span>
+
+            <span class="n">stream_item</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">make_stream_item</span><span class="p">(</span>
+                <span class="n">creation_time</span><span class="p">,</span> 
+                <span class="c">## make up an abs_url</span>
+                <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                    <span class="s">&#39;john-smith-corpus&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="n">label_id</span><span class="p">),</span> <span class="n">fname</span><span class="p">))</span>
+
+            <span class="k">if</span> <span class="nb">int</span><span class="p">(</span><span class="n">stream_item</span><span class="o">.</span><span class="n">stream_time</span><span class="o">.</span><span class="n">epoch_ticks</span><span class="p">)</span> <span class="o">!=</span> <span class="n">correct_time</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="n">PipelineBaseException</span><span class="p">(</span><span class="s">&#39;wrong stream_time construction: </span><span class="si">%r</span><span class="s">--&gt;</span><span class="si">%r</span><span class="s"> != </span><span class="si">%r</span><span class="s">&#39;</span>\
+                                            <span class="o">%</span> <span class="p">(</span><span class="n">creation_time</span><span class="p">,</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_time</span><span class="o">.</span><span class="n">epoch_ticks</span><span class="p">,</span>
+                                               <span class="n">correct_time</span><span class="p">))</span>
+
+            <span class="c">## These docs came from the authors of the paper cited above.</span>
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">source</span> <span class="o">=</span> <span class="s">&#39;bagga-and-baldwin&#39;</span>
+
+            <span class="c">## build a ContentItem for the body</span>
+            <span class="n">body</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">ContentItem</span><span class="p">()</span>
+            <span class="n">raw_string</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">dir_path</span><span class="p">,</span> <span class="n">fname</span><span class="p">))</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+            <span class="c">## We know that this is already clean and has nothing</span>
+            <span class="c">## tricky in it, because we manually cleansed it.  To</span>
+            <span class="c">## illustrate how we stick all strings into thrift, we</span>
+            <span class="c">## convert this to unicode (which introduces no changes)</span>
+            <span class="c">## and then encode it as utf-8, which also introduces no</span>
+            <span class="c">## changes.  Thrift stores strings as 8-bit character</span>
+            <span class="c">## strings.</span>
+            <span class="c"># http://www.mail-archive.com/thrift-user@incubator.apache.org/msg00210.html</span>
+            <span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span> <span class="o">=</span> <span class="nb">unicode</span><span class="p">(</span><span class="n">raw_string</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s">&#39;utf8&#39;</span><span class="p">)</span>
+
+            <span class="c">## attach the content_item to the stream_item</span>
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span> <span class="o">=</span> <span class="n">body</span>
+
+            <span class="n">stream_item</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">language</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Language</span><span class="p">(</span><span class="n">code</span><span class="o">=</span><span class="s">&#39;en&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s">&#39;ENGLISH&#39;</span><span class="p">)</span>
+
+            <span class="c">## The authors also annotated the corpus</span>
+            <span class="n">anno</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Annotator</span><span class="p">()</span>
+            <span class="n">anno</span><span class="o">.</span><span class="n">annotator_id</span> <span class="o">=</span> <span class="s">&#39;bagga-and-baldwin&#39;</span>
+            <span class="n">anno</span><span class="o">.</span><span class="n">annotation_time</span> <span class="o">=</span> <span class="n">stream_item</span><span class="o">.</span><span class="n">stream_time</span>
+
+            <span class="c">## build a Label for the doc-level label:</span>
+            <span class="n">rating</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Rating</span><span class="p">()</span>
+            <span class="n">rating</span><span class="o">.</span><span class="n">annotator</span> <span class="o">=</span> <span class="n">anno</span>
+            <span class="n">rating</span><span class="o">.</span><span class="n">target</span> <span class="o">=</span> <span class="n">streamcorpus</span><span class="o">.</span><span class="n">Target</span><span class="p">(</span><span class="n">target_id</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">label_id</span><span class="p">))</span> <span class="c"># must be string</span>
+            <span class="n">rating</span><span class="o">.</span><span class="n">contains_mention</span> <span class="o">=</span> <span class="bp">True</span>
+            <span class="n">rating</span><span class="o">.</span><span class="n">mentions</span> <span class="o">=</span> <span class="p">[</span><span class="s">&#39;john&#39;</span><span class="p">,</span> <span class="s">&#39;smith&#39;</span><span class="p">]</span>
+
+            <span class="c">## put this one label in the array of labels</span>
+            <span class="n">streamcorpus</span><span class="o">.</span><span class="n">add_annotation</span><span class="p">(</span><span class="n">stream_item</span><span class="p">,</span> <span class="n">rating</span><span class="p">)</span>
+
+            <span class="c">## provide this stream_item to the pipeline</span>
+            <span class="k">yield</span> <span class="n">stream_item</span>
+
+<span class="k">if</span> <span class="n">__name__</span> <span class="o">==</span> <span class="s">&#39;__main__&#39;</span><span class="p">:</span>
+    <span class="c">## this is a simple test of this reader stage</span>
+    <span class="kn">import</span> <span class="nn">argparse</span>
+    <span class="n">parser</span> <span class="o">=</span> <span class="n">argparse</span><span class="o">.</span><span class="n">ArgumentParser</span><span class="p">()</span>
+    <span class="n">parser</span><span class="o">.</span><span class="n">add_argument</span><span class="p">(</span>
+        <span class="s">&#39;input_dir&#39;</span><span class="p">,</span> 
+        <span class="n">help</span><span class="o">=</span><span class="s">&#39;path to a directory containing the original John Smith corpus.&#39;</span><span class="p">)</span>
+    <span class="n">args</span> <span class="o">=</span> <span class="n">parser</span><span class="o">.</span><span class="n">parse_args</span><span class="p">()</span>
+    
+    <span class="n">john_smith_reader_stage</span> <span class="o">=</span> <span class="n">john_smith</span><span class="p">({})</span>
+    <span class="k">for</span> <span class="n">si</span> <span class="ow">in</span> <span class="n">john_smith_reader_stage</span><span class="p">(</span> <span class="n">args</span><span class="o">.</span><span class="n">input_dir</span> <span class="p">):</span>
+        <span class="k">print</span> <span class="nb">len</span><span class="p">(</span><span class="n">si</span><span class="o">.</span><span class="n">body</span><span class="o">.</span><span class="n">clean_visible</span><span class="p">),</span> <span class="n">si</span><span class="o">.</span><span class="n">stream_id</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">streamcorpus-pipeline 0.7.10.dev1 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-50390027-1', 'streamcorpus.org');
+  ga('send', 'pageview');
+
+</script>
+
+  </body>
+</html>
